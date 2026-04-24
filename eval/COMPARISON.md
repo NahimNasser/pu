@@ -76,7 +76,7 @@ pu.sh is a **toy proof-of-concept** for extreme portability. Pi is a **productio
 |---|---|---|
 | **Zero-install deploy** (curl \| sh) | ✅ | ❌ needs npm |
 | **Runs without Node.js** | ✅ sh only | ❌ requires Node 23+ |
-| **19KB total footprint** | ✅ | ❌ ~50MB |
+| **19KB total footprint** | ✅ | ❌ ~10.5 MB (npm unpacked) |
 | **Runs in minimal containers** (alpine, busybox) | ✅ | ❌ |
 | **Pipe composition** (agent \| agent) | ✅ --pipe | ⚠️ -p (no chaining) |
 | **Zero config files** | ✅ env vars only | ❌ settings.json, sessions/ |
@@ -104,7 +104,7 @@ pu.sh is a **toy proof-of-concept** for extreme portability. Pi is a **productio
 
 ### The tradeoff in one line
 
-> Pi is a **15,000× larger** harness with more features. pu.sh is 310 lines of shell with zero dependencies beyond `sh` + `curl` — including a hand-rolled JSON parser in awk.
+> Pi is a **~550× larger** harness with more features. pu.sh is 310 lines of shell with zero dependencies beyond `sh` + `curl` — including a hand-rolled JSON parser in awk.
 
 ### Where pu.sh is genuinely useful
 

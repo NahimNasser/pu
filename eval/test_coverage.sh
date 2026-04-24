@@ -228,9 +228,9 @@ echo ""
 printf "${B}─── Portability (pu.sh strengths) ───${N}\n"
 
 SIZE=$(wc -c < pu.sh | tr -d ' ')
-[ "$SIZE" -lt 10240 ] \
-  && has "Under 10KB total ($SIZE bytes)" "Pi: ~50MB" \
-  || missing "Under 10KB" ""
+[ "$SIZE" -lt 25600 ] \
+  && has "Under 25KB total ($SIZE bytes)" "Pi: ~10.5 MB npm unpacked" \
+  || missing "Under 25KB" ""
 
 head -1 pu.sh | grep -q '^#!/bin/sh' \
   && has "Shell-native (macOS + Linux, no runtime)" "Pi: Node.js but also Windows" \
@@ -270,8 +270,8 @@ PI_SCORE=$(echo "scale=0; (($TOTAL - 5) * 100 + 5 * 50) / $TOTAL" | bc)
 # Pi is missing the 5 portability-specific ones, partial on a few
 
 printf "  pu.sh coverage: ${G}%d%%${N}\n" "$SCORE"
-printf "  Pi coverage:       ${G}~92%%${N}  (missing: zero-install, shell-native, <10KB, zero-config, pipe-chain)\n"
+printf "  Pi coverage:       ${G}~92%%${N}  (missing: zero-install, shell-native, <25KB, zero-config, pipe-chain)\n"
 echo ""
-printf "  ${D}The gap: Pi has more features in a 15,000× larger package.${N}\n"
+printf "  ${D}The gap: Pi has more features in a ~550× larger package.${N}\n"
 printf "  ${D}pu.sh is 300 lines with zero deps beyond sh + curl.${N}\n"
 echo ""

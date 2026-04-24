@@ -101,7 +101,7 @@ That was the wake-up call. Size was solved. Features were the gap.
 ✅ Clipboard (/copy → pbcopy/xclip)
 ✅ Session export (/export → markdown)
 ✅ Mid-session model switching (/model)
-✅ Smart compaction (LLM summarizes old context)
+⚠️  Context size cap (CTX_LIMIT env var; warn-only, LLM summarization not implemented)
 ✅ Plugin system (source .sh from .pi/extensions/)
 ✅ JSON output mode (--mode json)
 ✅ RPC mode (--mode rpc)
@@ -180,8 +180,8 @@ Objective functions: 2 (artifact_kb → parity_pct)
 Lines of code: 89 → 310 (still one file)
 Total artifact: 19 KB
 Dependencies: sh + curl (zero external)
-Pi equivalent: ~280 MB (Node.js + node_modules)
-Ratio: 15,000× smaller
+Pi equivalent: ~10.5 MB (npm `unpackedSize` for @mariozechner/pi-coding-agent)
+Ratio: ~550× smaller
 ```
 
 ---
@@ -211,7 +211,7 @@ Three capabilities were already implemented but the test suite didn't detect the
 ## Architecture: What pu.sh Looks Like Now
 
 ```
-pu.sh (18 KB, 310 lines, one file)
+pu.sh (19 KB, 310 lines, one file)
 ├── Config (env vars only, zero config files)
 ├── JSON parser (pure awk — no jq, no python)
 ├── 7 Tool definitions (bash/read/write/edit/grep/find/ls)
@@ -232,7 +232,7 @@ pu.sh (18 KB, 310 lines, one file)
 
 **Should you?** Depends. For CI/CD, containers, edge, bootstrapping, and understanding how agents work — absolutely. For daily coding work — use Pi.
 
-**What's the most portable agentic harness?** An 18 KB shell script that you can `curl | sh` onto any machine in the world. It won't have a TUI, but it'll write your files.
+**What's the most portable agentic harness?** A 19 KB shell script that you can `curl | sh` onto any machine in the world. It won't have a TUI, but it'll write your files.
 
 ---
 

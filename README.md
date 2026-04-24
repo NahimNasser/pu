@@ -51,7 +51,7 @@ The answer is a shell script. The agent loop itself — send prompt, parse respo
 | **Interactive REPL** | Multi-turn with memory. `/model` `/copy` `/export` `/skill:name` |
 | **File editing** | Surgical `oldText` → `newText` replacement (not file rewrite) |
 | **Context files** | Auto-loads `AGENTS.md` / `CLAUDE.md` from cwd up to `/` |
-| **Context windowing** | Trims old messages when context gets too long |
+| **Context size cap** | `AGENT_CONTEXT_LIMIT` env var (logs when exceeded — full trim not yet implemented) |
 | **Thinking levels** | `AGENT_THINKING=high` for reasoning-heavy tasks |
 | **Skills** | `/skill:name` loads `SKILL.md` capability packages |
 | **Prompt templates** | `/template` expands from `.pi/prompts/*.md` |
@@ -63,8 +63,7 @@ The answer is a shell script. The agent loop itself — send prompt, parse respo
 | **Pipe mode** | `--pipe` for clean output, composable with other agents |
 | **Checkpoint/resume** | `AGENT_HISTORY=file.json` saves and restores state |
 | **Confirmation mode** | `AGENT_CONFIRM=1` asks before every tool execution |
-
-| **Dual provider** | Anthropic + OpenAI, switchable mid-session |
+| **Dual provider** | Anthropic + OpenAI (via `AGENT_PROVIDER` env var; model switchable mid-session via `/model`) |
 | **JSONL logging** | Every step logged as structured JSON |
 
 ## What it can't do
@@ -87,14 +86,16 @@ All 10 missing features trace back to one thing shell can't do: **raw terminal m
 ## The Size
 
 ```
-pu.sh               19 KB     █
-Goose (Rust)        30 MB     ██████████████████████████████
-Claude Code         50 MB     ██████████████████████████████████████████████████
-Pi (Node.js)       280 MB     ████████████████████████████████████████████ (keeps going)
-SWE-agent (Docker)   2 GB     ████████████████████████████████ (you get the idea)
+pu.sh                19 KB    █
+Claude Code         129 KB    ██████
+Pi (Node.js)       10.5 MB    ███████████████████████████████████████████████
+Goose (Rust)         65 MB    ███████████████████████████████████████████████████████████████████ (CLI tarball)
+SWE-agent (Docker) ~900 MB    ██████████████████████████████... (Docker image)
 ```
 
-14,000× smaller than Pi. Same 7 tools. Same system prompt structure. Same `AGENTS.md` loading. Same `oldText`/`newText` editing.
+*Sizes: pu.sh — actual file. Claude Code, Pi — npm `unpackedSize`. Goose — `goose-aarch64-apple-darwin` release tarball. SWE-agent — `sweagent/swe-agent:latest` compressed Docker image.*
+
+~550× smaller than Pi. Same 7 tools. Same system prompt structure. Same `AGENTS.md` loading. Same `oldText`/`newText` editing.
 
 Our entire supply chain attack surface is `curl`. We wrote our own JSON parser in `awk` because jq was one dependency too many. Your average coding agent has more transitive dependencies than a European royal family tree — and about the same chance of something inbred causing a security incident.
 
