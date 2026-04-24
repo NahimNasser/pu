@@ -180,8 +180,8 @@ Objective functions: 2 (artifact_kb → parity_pct)
 Lines of code: 89 → 310 (still one file)
 Total artifact: 19 KB
 Dependencies: sh + curl (zero external)
-Pi equivalent: ~10.5 MB (npm `unpackedSize` for @mariozechner/pi-coding-agent)
-Ratio: ~550× smaller
+Pi equivalent: ~130–170 MB on disk (Node 23 runtime ~80 MB + @mariozechner/pi-coding-agent 10.5 MB + 21 runtime deps)
+Ratio: ~7,000–9,000× smaller
 ```
 
 ---

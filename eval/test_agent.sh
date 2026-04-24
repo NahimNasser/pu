@@ -458,7 +458,7 @@ echo ""
 printf "%-35s %-12s %-12s\n" "Capability" "pu.sh" "Pi"
 printf "%-35s %-12s %-12s\n" "---" "---" "---"
 # Portability
-printf "%-35s %-12s %-12s\n" "Single file deploy"          "✅ 19KB"    "❌ ~10.5MB npm"
+printf "%-35s %-12s %-12s\n" "Single file deploy"          "✅ 19KB"    "❌ ~150MB on disk npm"
 printf "%-35s %-12s %-12s\n" "Zero-install (curl|sh)"       "✅"          "❌ npm i"
 printf "%-35s %-12s %-12s\n" "sh compatible (macOS+Linux)"    "✅"          "❌ Node.js"
 printf "%-35s %-12s %-12s\n" "Runs in containers/CI"        "✅ native"   "⚠️  needs node"
@@ -515,7 +515,7 @@ printf "%-35s %-12s %-12s\n" "Missing (❌)" "$AGENT_NO/27" "$PI_NO/27"
 printf "%-35s %-12s %-12s\n" "Coverage score" "$(echo "scale=0; ($AGENT_YES * 100 + $AGENT_PARTIAL * 50) / 27" | bc)%" "$(echo "scale=0; ($PI_YES * 100 + $PI_PARTIAL * 50) / 27" | bc)%"
 echo ""
 printf "%-35s %-12s %-12s\n" "PORTABILITY SCORE" "" ""
-printf "%-35s %-12s %-12s\n" "Artifact size" "19KB" "~10.5MB"
+printf "%-35s %-12s %-12s\n" "Artifact size" "19KB" "~150MB on disk"
 printf "%-35s %-12s %-12s\n" "Dependencies" "sh+curl" "Node.js 23+"
 printf "%-35s %-12s %-12s\n" "Time to deploy" "<1s" "~60s"
 printf "%-35s %-12s %-12s\n" "Platforms" "macOS/Linux" "Mac/Linux/Win/Android"
@@ -549,7 +549,7 @@ cat > eval_results.json <<EOFJ
   },
   "portability": {
     "agent_sh": { "size_kb": $(echo "scale=1; $SIZE/1024" | bc), "deps": "sh+curl", "deploy_seconds": 1 },
-    "pi":       { "size_kb": 10750, "deps": "node23+npm", "deploy_seconds": 60 }
+    "pi":       { "size_kb": 153600, "deps": "node23+npm", "deploy_seconds": 60 }
   }
 }
 EOFJ
