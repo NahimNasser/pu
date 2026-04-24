@@ -7,7 +7,7 @@
 <p align="center"><em>Finally, a slop cannon small enough to fit in your pocket.</em></p>
 
 ```sh
-curl -sL https://raw.githubusercontent.com/user/push/main/pu.sh -o pu.sh && chmod +x pu.sh
+curl -sL https://raw.githubusercontent.com/NahimNasser/pu/main/pu.sh -o pu.sh && chmod +x pu.sh
 ./pu.sh "refactor auth.py to use JWT"
 ```
 
@@ -17,7 +17,7 @@ That's the entire install. No npm. No pip. No docker. No runtime. 19KB of shell,
 
 ```sh
 # Zero install. Literally.
-curl -sL https://raw.githubusercontent.com/.../pu.sh > pu.sh && chmod +x pu.sh
+curl -sL https://raw.githubusercontent.com/NahimNasser/pu/main/pu.sh > pu.sh && chmod +x pu.sh
 
 # Push some code
 ./pu.sh "refactor auth.py to use JWT"
