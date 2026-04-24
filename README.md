@@ -87,17 +87,17 @@ All 10 missing features trace back to one thing shell can't do: **raw terminal m
 
 ```
 pu.sh                  19 KB   █  (sh + curl — already on every Unix box)
-Goose (Rust)           65 MB   ██████████████  (self-contained static binary)
-Claude Code           ~80 MB   ██████████████████  (Node runtime + 129 KB pkg, 0 deps)
-Pi (Node.js)      ~130–170 MB  ████████████████████████████████  (Node runtime + 10.5 MB pkg + 21 runtime deps)
+Claude Code           ~80 MB   ███████████  (Node runtime + 129 KB pkg, 0 deps)
+Pi (Node.js)      ~130–170 MB  █████████████████████  (Node runtime + 10.5 MB pkg + 21 deps)
+Goose (Rust CLI)      237 MB   █████████████████████████████  (single static binary, measured extracted)
 SWE-agent (Docker) ~2.2–2.5 GB  ████████████████████████████████████████████████████████████... (uncompressed image)
 ```
 
-*What "on disk" means here: for npm tools, Node 23 runtime (~80 MB) plus the package plus transitive deps. For Goose, the standalone Rust binary. For SWE-agent, the uncompressed Docker image (Hub lists ~900 MB compressed, ~2.5× on extraction). pu.sh assumes `sh` + `curl` are already installed, which on a Unix box is a safe bet.*
+*What "on disk" means here: for npm tools, Node 23 runtime (~80 MB) plus the package plus transitive deps. For Goose, the actual extracted Rust binary — 237 MB measured, not the 65 MB bz2 tarball that the release page shows. For SWE-agent, the uncompressed Docker image (~900 MB compressed on Hub, ~2.5× on extraction). pu.sh assumes `sh` + `curl` are already installed, which on a Unix box is a safe bet.*
 
 *Published-package sizes alone (`unpackedSize`): Claude Code 129 KB, Pi 10.5 MB — but neither runs without Node.*
 
-Roughly **~7,000–9,000× smaller** than a Pi install. Same 7 tools. Same system prompt structure. Same `AGENTS.md` loading. Same `oldText`/`newText` editing.
+Roughly **~7,000–9,000× smaller** than a Pi install, **~13,000× smaller** than Goose CLI. Same 7 tools. Same system prompt structure. Same `AGENTS.md` loading. Same `oldText`/`newText` editing.
 
 Our entire supply chain attack surface is `curl`. We wrote our own JSON parser in `awk` because jq was one dependency too many. Your average coding agent has more transitive dependencies than a European royal family tree — and about the same chance of something inbred causing a security incident.
 
