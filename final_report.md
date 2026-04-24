@@ -180,8 +180,8 @@ Objective functions: 2 (artifact_kb → parity_pct)
 Lines of code: 89 → 310 (still one file)
 Total artifact: 19 KB
 Dependencies: sh + curl (zero external)
-Pi equivalent: ~130–170 MB on disk (Node 23 runtime ~80 MB + @mariozechner/pi-coding-agent 10.5 MB + 21 runtime deps)
-Ratio: ~7,000–9,000× smaller
+Pi equivalent: 281 MB on disk (measured: 172 MB for @mariozechner/pi-coding-agent + 108 MB Node 23 binary)
+Ratio: ~15,000× smaller
 ```
 
 ---

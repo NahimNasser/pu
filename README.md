@@ -86,18 +86,21 @@ All 10 missing features trace back to one thing shell can't do: **raw terminal m
 ## The Size
 
 ```
-pu.sh                  19 KB   █  (sh + curl — already on every Unix box)
-Claude Code           ~80 MB   ███████████  (Node runtime + 129 KB pkg, 0 deps)
-Pi (Node.js)      ~130–170 MB  █████████████████████  (Node runtime + 10.5 MB pkg + 21 deps)
-Goose (Rust CLI)      237 MB   █████████████████████████████  (single static binary, measured extracted)
-SWE-agent (Docker) ~2.2–2.5 GB  ████████████████████████████████████████████████████████████... (uncompressed image)
+pu.sh                19 KB    █  (sh + curl — already on every Unix box)
+Claude Code         209 MB    ██████████████████████████  (self-contained native binary)
+Goose CLI           237 MB    █████████████████████████████  (self-contained Rust binary)
+Pi + Node           281 MB    ███████████████████████████████████  (172 MB pkg + 108 MB Node 23)
+SWE-agent (Docker)  1.8 GB    ██████████████████████████████████████████████████████████████...  (uncompressed image)
 ```
 
-*What "on disk" means here: for npm tools, Node 23 runtime (~80 MB) plus the package plus transitive deps. For Goose, the actual extracted Rust binary — 237 MB measured, not the 65 MB bz2 tarball that the release page shows. For SWE-agent, the uncompressed Docker image (~900 MB compressed on Hub, ~2.5× on extraction). pu.sh assumes `sh` + `curl` are already installed, which on a Unix box is a safe bet.*
+*All numbers measured on this machine (macOS arm64, Node 23.11.0), not pulled from release pages:*
+- *pu.sh: `wc -c` on the file.*
+- *Claude Code: `npm install @anthropic-ai/claude-code` + `du -sh node_modules`. Ships an `optionalDependency` that fetches a 208 MB native Mach-O binary; doesn't need Node to run after install.*
+- *Goose: extracted `goose-aarch64-apple-darwin.tar.bz2` from the latest release (tarball is 65 MB, binary inside is 237 MB — ~3.5× compression).*
+- *Pi: `du -sh` on `node_modules/@mariozechner/pi-coding-agent` + size of the `node` binary it runs under. 132 deps bundled.*
+- *SWE-agent: `docker image inspect sweagent/swe-agent:latest --format '{{.Size}}'` → 1.78 GB uncompressed.*
 
-*Published-package sizes alone (`unpackedSize`): Claude Code 129 KB, Pi 10.5 MB — but neither runs without Node.*
-
-Roughly **~7,000–9,000× smaller** than a Pi install, **~13,000× smaller** than Goose CLI. Same 7 tools. Same system prompt structure. Same `AGENTS.md` loading. Same `oldText`/`newText` editing.
+Roughly **~15,000× smaller** than Pi, **~13,000×** smaller than Goose, **~11,000×** smaller than Claude Code, **~100,000×** smaller than SWE-agent. Same 7 tools. Same system prompt structure. Same `AGENTS.md` loading. Same `oldText`/`newText` editing.
 
 Our entire supply chain attack surface is `curl`. We wrote our own JSON parser in `awk` because jq was one dependency too many. Your average coding agent has more transitive dependencies than a European royal family tree — and about the same chance of something inbred causing a security incident.
 

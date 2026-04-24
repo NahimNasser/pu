@@ -229,7 +229,7 @@ printf "${B}─── Portability (pu.sh strengths) ───${N}\n"
 
 SIZE=$(wc -c < pu.sh | tr -d ' ')
 [ "$SIZE" -lt 25600 ] \
-  && has "Under 25KB total ($SIZE bytes)" "Pi: ~150 MB on disk (Node+deps)" \
+  && has "Under 25KB total ($SIZE bytes)" "Pi: 281 MB measured (pkg+Node)" \
   || missing "Under 25KB" ""
 
 head -1 pu.sh | grep -q '^#!/bin/sh' \
@@ -272,6 +272,6 @@ PI_SCORE=$(echo "scale=0; (($TOTAL - 5) * 100 + 5 * 50) / $TOTAL" | bc)
 printf "  pu.sh coverage: ${G}%d%%${N}\n" "$SCORE"
 printf "  Pi coverage:       ${G}~92%%${N}  (missing: zero-install, shell-native, <25KB, zero-config, pipe-chain)\n"
 echo ""
-printf "  ${D}The gap: Pi has more features in a ~7,000-9,000× larger install (Node runtime + deps).${N}\n"
+printf "  ${D}The gap: Pi has more features in a ~15,000× larger install (measured: 281 MB vs 19 KB).${N}\n"
 printf "  ${D}pu.sh is 300 lines with zero deps beyond sh + curl.${N}\n"
 echo ""
