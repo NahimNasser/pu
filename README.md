@@ -180,7 +180,9 @@ bash eval/run_eval.sh live
 
 4. **Heredocs don't survive JSON.** When the model returns `cat > file << 'EOF'`, the heredoc body gets mangled by JSON escaping. Solution: tell the model to use the `write` tool instead. System prompt engineering > parsing heroics.
 
-## Prior art
+## Prior art & credits
+
+`pu.sh` is a derived work, and we want to be loud about it. The system prompt structure, the 7-tool surface (`bash` `read` `write` `edit` `grep` `find` `ls`), the `oldText`/`newText` editing model, and the `AGENTS.md` loading convention all come straight from **[Pi](https://pi.dev/)**. Huge thanks and respect to the Pi team — they figured out the right shape of a small, honest coding agent, and we just rewrote the runtime in shell. If you want a real, extensible, production-grade agent built by people who clearly know what they're doing, go use Pi. They earned it.
 
 We [compared against Pi](eval/COMPARISON.md) feature-by-feature. Pi wins on extensibility (TypeScript plugins, TUI, 20+ providers). We win on portability (curl it onto a Raspberry Pi in 1 second). Different tools for different problems.
 
@@ -203,4 +205,4 @@ An AI and a human ran 30+ experiments over a multi-hour session, arguing about `
 
 ## License
 
-MIT. It's 310 lines. Go nuts.
+MIT — see [LICENSE](LICENSE). It's 310 lines. Go nuts.
