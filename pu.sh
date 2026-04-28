@@ -66,10 +66,12 @@ jp(){
       gsub(/\\n/,"\n",o); gsub(/\\t/,"\t",o); gsub(/\\\\/,"\\",o); gsub(/\\"/,"\"",o)
       printf "%s",o
     } else if(c=="[" || c=="{"){
-      d=1; s=substr(s,2); o=c
+      d=1; s=substr(s,2); o=c; q=0; e=0
       while(d>0 && length(s)>0){
-        c2=substr(s,1,1); s=substr(s,2)
-        if(c2=="{" || c2=="[")d++; if(c2=="}" || c2=="]")d--; o=o c2
+        c2=substr(s,1,1); s=substr(s,2); o=o c2
+        if(e){e=0;continue}; if(c2=="\\"){e=1;continue}
+        if(c2=="\""){q=!q;continue}; if(q)continue
+        if(c2=="{" || c2=="[")d++; else if(c2=="}" || c2=="]")d--
       }; print o
     } else { match(s,/^[^,}\]]+/); print substr(s,1,RLENGTH) }
   }'
@@ -78,17 +80,25 @@ jb(){
   printf '%s' "$1" | awk -v t="$2" 'BEGIN{RS="\0"}{
     n=index($0,"\"" t "\""); if(n==0){print "";exit}
     for(i=n-1;i>=1;i--) if(substr($0,i,1)=="{") break
-    s=substr($0,i); d=0; o=""
+    s=substr($0,i); d=0; o=""; q=0; e=0
     for(j=1;j<=length(s);j++){
-      c=substr(s,j,1); if(c=="{")d++; if(c=="}")d--; o=o c; if(d==0)break
+      c=substr(s,j,1); o=o c
+      if(e){e=0;continue}; if(c=="\\"){e=1;continue}
+      if(c=="\""){q=!q;continue}; if(q)continue
+      if(c=="{")d++; else if(c=="}")d--
+      if(d==0)break
     }; print o
   }'
 }
 j1st(){
   printf '%s' "$1" | awk 'BEGIN{RS="\0"}{
-    n=index($0,"{"); d=0; o=""
+    n=index($0,"{"); d=0; o=""; q=0; e=0
     for(i=n;i<=length($0);i++){
-      c=substr($0,i,1); if(c=="{")d++; if(c=="}")d--; o=o c; if(d==0)break
+      c=substr($0,i,1); o=o c
+      if(e){e=0;continue}; if(c=="\\"){e=1;continue}
+      if(c=="\""){q=!q;continue}; if(q)continue
+      if(c=="{")d++; else if(c=="}")d--
+      if(d==0)break
     }; print o
   }'
 }
