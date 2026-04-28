@@ -261,6 +261,43 @@ valid_json "$(printf '{"x":"%s"}' "$ESC")" \
   && pass "TR-7" "truncated output → json_escape → valid JSON" \
   || fail "TR-7" "truncated→escape produces invalid JSON"
 
+# ── edit tool: multi-line oldText/newText (regression) ────────────
+echo
+printf "${B}━━━ edit tool ━━━${N}\n"
+
+# Replicate the inline edit awk from pu.sh:196 for direct testing.
+edit_replace(){ local file="$1" old="$2" new="$3"
+  OLD="$old" NEW="$new" awk 'BEGIN{RS="\0";ORS="";o=ENVIRON["OLD"];n=ENVIRON["NEW"]}{i=index($0,o);while(i>0){printf "%s%s",substr($0,1,i-1),n;$0=substr($0,i+length(o));i=index($0,o)}printf "%s",$0}' "$file"
+}
+
+# ED-1: single-line edit
+F=$(mktemp); printf 'foo\nbar\nbaz\n' > "$F"
+OUT=$(edit_replace "$F" "bar" "BAR" 2>&1)
+case "$OUT" in *"foo"*"BAR"*"baz"*) pass "ED-1" "single-line replacement" ;;
+  *) fail "ED-1" "single-line" "got: $OUT" ;; esac
+
+# ED-2: multi-line oldText (the regression — used to fail with awk: newline in string)
+printf 'header\nline1\nline2\nline3\nfooter\n' > "$F"
+ERR=$(edit_replace "$F" $'line1\nline2\nline3' "REPLACED" 2>&1 >/dev/null)
+case "$ERR" in *"newline in string"*) fail "ED-2" "multi-line oldText: regression hit" "$ERR" ;;
+  *) pass "ED-2" "multi-line oldText: no awk parse error" ;; esac
+
+# ED-3: multi-line oldText AND newText round-trip
+edit_replace "$F" $'line1\nline2\nline3' $'NEW1\nNEW2' 2>/dev/null > "$F.out"
+EXPECTED=$'header\nNEW1\nNEW2\nfooter\n'
+[ "$(cat "$F.out")" = "$(printf '%s' "$EXPECTED")" ] \
+  && pass "ED-3" "multi-line old → multi-line new" \
+  || fail "ED-3" "multi-line replacement" "got: $(cat "$F.out" | od -c | head -2)"
+rm "$F.out"
+
+# ED-4: oldText with special awk chars (&, \, regex metas)
+printf 'use & here, and \\ too\n' > "$F"
+OUT=$(edit_replace "$F" "& here, and \\" "REPLACED" 2>/dev/null)
+case "$OUT" in *"REPLACED"*) pass "ED-4" "oldText with & and backslash" ;;
+  *) fail "ED-4" "special chars" "got: $OUT" ;; esac
+
+rm "$F"
+
 # ── Summary ────────────────────────────────────────────────────────
 echo
 printf "${B}━━━ RESULTS ━━━${N}\n"

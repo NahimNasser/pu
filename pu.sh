@@ -193,7 +193,7 @@ run_tool(){ local tool_name="$1" input="$2"
       info "edit: $fp"
       if [ -f "$fp" ]; then
         if grep -qF "$old" "$fp"; then
-          awk -v o="$old" -v n="$new" 'BEGIN{RS="\0";ORS=""}{i=index($0,o);while(i>0){printf "%s%s",substr($0,1,i-1),n;$0=substr($0,i+length(o));i=index($0,o)}printf "%s",$0}' "$fp" > "$fp.tmp" && mv "$fp.tmp" "$fp"
+          OLD="$old" NEW="$new" awk 'BEGIN{RS="\0";ORS="";o=ENVIRON["OLD"];n=ENVIRON["NEW"]}{i=index($0,o);while(i>0){printf "%s%s",substr($0,1,i-1),n;$0=substr($0,i+length(o));i=index($0,o)}printf "%s",$0}' "$fp" > "$fp.tmp" && mv "$fp.tmp" "$fp"
           out="Edited $fp"
         else out="Error: oldText not found in $fp"; rc=1; fi
       else out="Error: file not found: $fp"; rc=1; fi;;
