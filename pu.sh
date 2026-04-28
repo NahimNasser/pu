@@ -92,7 +92,7 @@ j1st(){
     }; print o
   }'
 }
-json_escape(){ printf '%s' "$1" | awk '{gsub(/\\/,"\\\\")} {gsub(/"/,"\\\"")} {gsub(/\t/,"\\t")} NR>1{printf "\\n"} {printf "%s",$0}';}
+json_escape(){ printf '%s' "$1" | LC_ALL=C tr -d '\000-\010\013\014\016-\037' | awk '{gsub(/\\/,"\\\\")} {gsub(/"/,"\\\"")} {gsub(/\t/,"\\t")} {gsub(/\r/,"\\r")} NR>1{printf "\\n"} {printf "%s",$0}';}
 info(){ [ "$PIPE" = 0 ] && printf '\033[36m[pu]\033[0m %s\n' "$*" >&2 || true;}
 err(){ printf '\033[31m[!] %s\033[0m\n' "$*" >&2;}
 dbg(){ [ "$VERBOSE" = 1 ] && printf '[v] %s\n' "$*" >&2 || true;}
