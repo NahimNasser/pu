@@ -40,8 +40,11 @@ pu.sh — portable agentic harness (sh+curl, no deps)
 Usage: ./pu.sh "task" | ./pu.sh (interactive) | --pipe | --cost | -v
 Env: ANTHROPIC_API_KEY OPENAI_API_KEY AGENT_MODEL AGENT_PROVIDER AGENT_SYSTEM
  AGENT_MAX_STEPS AGENT_MAX_TOKENS AGENT_LOG AGENT_CONFIRM AGENT_VERBOSE
- AGENT_CONTEXT_LIMIT AGENT_HISTORY(checkpoint) AGENT_THINKING(off/low/medium/high)
+ AGENT_CONTEXT_LIMIT AGENT_RESERVE AGENT_TOOL_TRUNC
+ AGENT_HISTORY(checkpoint) AGENT_THINKING(off/low/medium/high)
 7 tools, multi-turn, retries, JSONL logging, pipe mode, @file refs, !command
+Auto-compaction (Pi-style): summarizes older turns when context fills.
+/compact [focus] manually triggers it.
 HELP
 exit 0;;-v|--version)echo "pu.sh 1.0.0";exit 0;;--pipe|-p)PIPE=1;shift;;--cost)COST=1;shift;;-i)INTERACTIVE=1;shift;;-n|--no-interactive)INTERACTIVE=-1;shift;;esac
 for _dep in curl awk;do command -v $_dep >/dev/null 2>&1||{ printf '\033[31m[!] %s not found\033[0m\n' "$_dep" >&2;exit 1;};done
@@ -200,7 +203,7 @@ run_tool(){ local tool_name="$1" input="$2"
     *)
       info "\$ $input"; out=$(sh -c "$input" 2>&1) && rc=0 || rc=$?;;
   esac
-  [ ${#out} -gt 30000 ] && out="$(printf '%s' "$out" | head -c 30000)...[truncated]"
+  M="${AGENT_TOOL_TRUNC:-2000}"; [ ${#out} -gt "$M" ] && out="$(printf '%s\n' "$out" | awk '{a[NR]=$0}END{if(NR<=40){for(i=1;i<=NR;i++)print a[i];exit}for(i=1;i<=30;i++)print a[i];printf "...[%d lines truncated]...\n",NR-40;for(i=NR-9;i<=NR;i++)print a[i]}')"
   printf '%s' "$out";}
 MSGS=""
 save(){ [ -n "$HISTORY" ] && printf '%s' "$MSGS" > "$HISTORY" || true;}
@@ -209,7 +212,28 @@ append(){ MSGS=$(printf '%s' "$MSGS" | sed 's/]$//')",$1]";}
 RA='"role":"assistant"' RU='"role":"user"' RT='"role":"tool"'
 TOKEN_IN=0 TOKEN_OUT=0
 track_tokens(){ [ "$COST" = 1 ] && { local u; u=$(jp "$1" usage); local a; a=$(jp "$u" input_tokens); local b; b=$(jp "$u" output_tokens); TOKEN_IN=$((TOKEN_IN+${a:-0})); TOKEN_OUT=$((TOKEN_OUT+${b:-0})); } || true;}
-trim_context(){ [ ${#1} -le "$CTX_LIMIT" ] && { printf '%s' "$1"; return; }; info "Trimming context..."; printf '%s' "$1";}
+trim_context(){ local m="$1" f="${2:-}" cap=$((CTX_LIMIT-${AGENT_RESERVE:-16000})) o n c h a r mid p req res s
+  [ -z "$f" ] && [ ${#m} -le "$cap" ] && { printf '%s' "$m"; return; }
+  info "Compacting (${#m}b > ${cap}b)${f:+ focus: $f}"
+  o=$(printf '%s' "$m" | awk 'BEGIN{RS="\0"}{d=0;q=0;e=0;for(i=1;i<=length($0);i++){c=substr($0,i,1)
+    if(e){e=0;continue};if(c=="\\"){e=1;continue};if(c=="\""){q=!q;continue};if(q)continue
+    if(c=="{"){if(d==0)s=i;d++}else if(c=="}"){d--;if(d==0)print substr($0,s,i-s+1)}}}')
+  n=$(printf '%s\n' "$o" | wc -l | tr -d ' '); [ "$n" -lt 6 ] && { printf '%s' "$m"; return; }
+  c=$((n-3)); h=$(printf '%s\n' "$o" | sed -n "${c}p")
+  case "$h" in *tool_result*) c=$((c-1));; esac
+  [ "$c" -lt 2 ] && { printf '%s' "$m"; return; }
+  a=$(printf '%s\n' "$o" | sed -n 1p)
+  r=$(printf '%s\n' "$o" | sed -n "${c},${n}p" | tr '\n' ',' | sed 's/,$//')
+  mid=$(printf '%s\n' "$o" | sed -n "2,$((c-1))p")
+  [ -z "$mid" ] && { printf '%s' "$m"; return; }
+  p="${f:+Focus: $f. }Summarize this transcript in under 500 words, preserving files read, errors hit, code changes, decisions made. Do not call tools.
+
+$mid"
+  req='[{"role":"user","content":"'$(json_escape "$p")'"}]'
+  res=$(call_api "$req"); parse_response "$res"
+  [ -z "$TX" ] && { err "Summarization failed; passing through"; printf '%s' "$m"; return; }
+  s='{"role":"user","content":"[Earlier compacted: '$(json_escape "$TX")']"}'
+  printf '[%s,%s,%s]' "$a" "$s" "$r";}
 load_context(){ local dir; dir=$(pwd); local ctx=""
   while [ "$dir" != "/" ]; do
     for f in AGENTS.md CLAUDE.md; do [ -f "$dir/$f" ] && ctx="$ctx
@@ -286,6 +310,7 @@ handle_cmd(){ case "$1" in
   /model|/model\ *) local nm; nm=$(printf '%s' "$1" | sed 's|^/model *||')
     [ -n "$nm" ] && { MODEL="$nm"; info "Model: $MODEL"; } || info "Current: $MODEL"; return 0;;
   /copy) _copy; return 0;; /fork) _fork; return 0;; /quit|/exit) exit 0;;
+  /compact|/compact\ *) MSGS=$(trim_context "$MSGS" "$(printf '%s' "$1" | sed 's|^/compact *||')"); save; info "Compacted (${#MSGS}b)"; return 0;;
   /export|/export\ *) _export "$(printf '%s' "$1" | sed 's|^/export *||')"; return 0;;
   /skill:*) _skill "$(printf '%s' "$1" | sed 's|^/skill:||')"; return 0;;
   /session) info "Log: $LOG | Model: $MODEL ($PROVIDER) | Steps: $MAX_STEPS"; return 0;;
@@ -301,7 +326,7 @@ case "$PROVIDER" in anthropic) [ -n "${ANTHROPIC_API_KEY:-}" ] || { err "Set ANT
 load_context
 [ -n "$TASK" ] && TASK=$(expand_refs "$TASK") || true
 [ -n "$TASK" ] && { info "$TASK"; info "$MODEL ($PROVIDER) $MAX_STEPS steps"; run_task "$TASK"; exit $?; } || true
-info "$MODEL ($PROVIDER) | /model /copy /export /skill:name /quit | !cmd | @file"
+info "$MODEL ($PROVIDER) | /model /copy /compact /export /skill:name /quit | !cmd | @file"
 while true; do
   _STATE=idle; printf '\033[36m> \033[0m' >&2; read -r INPUT || break
   case "$INPUT" in quit|exit|q) break;; ''|' ') continue;; esac
