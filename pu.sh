@@ -11,7 +11,7 @@ _load_env(){ [ -f "$HOME/.pu.env" ] || return; while IFS='=' read -r k v; do k=$
 [ -z "${ANTHROPIC_API_KEY:-}${OPENAI_API_KEY:-}" ] && _load_env; [ -n "${OPENAI_API_KEY:-}" ] && OPENAI_API_KEY=$(_clean_key "$OPENAI_API_KEY"); [ -n "${ANTHROPIC_API_KEY:-}" ] && ANTHROPIC_API_KEY=$(_clean_key "$ANTHROPIC_API_KEY")
 if [ -n "${AGENT_PROVIDER:-}" ]; then PROVIDER=$AGENT_PROVIDER; else case "${AGENT_MODEL:-}" in gpt-*|o1*|o3*|o4*) PROVIDER=openai;; claude-*) PROVIDER=anthropic;; *) [ -n "${OPENAI_API_KEY:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ] && PROVIDER=openai || PROVIDER=anthropic;; esac; fi
 case "$PROVIDER" in openai) MODEL="${AGENT_MODEL:-gpt-5.5}";; *) MODEL="${AGENT_MODEL:-claude-opus-4-7}";; esac
-MAX_STEPS="${AGENT_MAX_STEPS:-25}" MAX_TOKENS="${AGENT_MAX_TOKENS:-4096}" AGENT_RESERVE="${AGENT_RESERVE:-16000}" AGENT_TOOL_TRUNC="${AGENT_TOOL_TRUNC:-100000}" AGENT_READ_MAX="${AGENT_READ_MAX:-1000000}" LOG="${AGENT_LOG:-agent.jsonl}" HISTORY="${AGENT_HISTORY:-}" CONFIRM="${AGENT_CONFIRM:-0}"
+MAX_STEPS="${AGENT_MAX_STEPS:-100}" MAX_TOKENS="${AGENT_MAX_TOKENS:-4096}" AGENT_RESERVE="${AGENT_RESERVE:-16000}" AGENT_TOOL_TRUNC="${AGENT_TOOL_TRUNC:-100000}" AGENT_READ_MAX="${AGENT_READ_MAX:-1000000}" LOG="${AGENT_LOG:-.pu-events.jsonl}" HISTORY="${AGENT_HISTORY:-.pu-history.json}" CONFIRM="${AGENT_CONFIRM:-0}"
 CTX_LIMIT="${AGENT_CONTEXT_LIMIT:-400000}" VERBOSE="${AGENT_VERBOSE:-1}" THINKING="${AGENT_THINKING:-}" EFFORT="${AGENT_EFFORT:-${AGENT_THINKING:-medium}}" EFFORT_OK=0
 case "$PROVIDER:$MODEL" in openai:gpt-5.5*) EFFORT_OK=1;; anthropic:claude-opus-4-7*) [ -z "${AGENT_CONTEXT_LIMIT:-}" ] && CTX_LIMIT=272000; EFFORT_OK=1;; anthropic:claude-opus-4-6*|anthropic:claude-sonnet-4-6*|anthropic:claude-opus-4-5*) EFFORT_OK=1;; esac
 PIPE=0 COST=0 INTERACTIVE=0 MSGS=""
@@ -64,7 +64,7 @@ jp(){
         o=o substr(s,1,p-1)
         if(bs%2==1){o=o "\"";s=substr(s,p+1);continue}; break
       }
-      gsub(/\\\\/,"\001",o); gsub(/\\n/,"\n",o); gsub(/\\t/,"\t",o); gsub(/\\r/,"\r",o); gsub(/\\u2019/,"\047",o); gsub(/\\u201c|\\u201d/,"\"",o); gsub(/\\u2013|\\u2014/,"-",o); gsub(/\\"/,"\"",o); gsub(/\001/,"\\",o)
+      gsub(/\\\\/,"\001",o); gsub(/\\n/,"\n",o); gsub(/\\t/,"\t",o); gsub(/\\r/,"\r",o); gsub(/\\u00fc/,"ü",o); gsub(/\\u2019/,"\047",o); gsub(/\\u201c|\\u201d/,"\"",o); gsub(/\\u2013|\\u2014/,"-",o); gsub(/\\"/,"\"",o); gsub(/\001/,"\\",o)
       printf "%s",o
     } else if(c=="[" || c=="{"){
       d=1; s=substr(s,2); o=c; q=0; e=0
@@ -240,8 +240,8 @@ run_tool(){ local tool_name="$1" input="$2"
   M="$AGENT_TOOL_TRUNC"; [ "$tool_name" != read ] && [ ${#out} -gt "$M" ] && out="$(printf '%s\n' "$out" | awk '{a[NR]=$0}END{if(NR<=40){for(i=1;i<=NR;i++)print a[i];exit}for(i=1;i<=30;i++)print a[i];printf "...[%d lines hidden; call read with offset/limit to view a specific range]...\n",NR-40;for(i=NR-9;i<=NR;i++)print a[i]}')"
   printf '%s' "$out";}
 save(){ [ -n "$HISTORY" ] && printf '%s' "$MSGS" > "$HISTORY" || true;}
-load(){ [ -n "$HISTORY" ] && [ -f "$HISTORY" ] && MSGS=$(cat "$HISTORY") && info "Resumed: $HISTORY" && return 0; return 1;}
-append(){ MSGS=$(printf '%s' "$MSGS" | sed 's/]$//')",$1]";}
+load(){ [ -n "$HISTORY" ] && [ -f "$HISTORY" ] && MSGS=$(cat "$HISTORY") && [ -n "$MSGS" ] && [ "$MSGS" != "[]" ] && return 0; MSGS=""; return 1;}; _replay(){ [ "$INTERACTIVE" = 1 ] && [ -f "$LOG" ] || return; info "Last messages from $LOG:"; awk '/"t":"start"/{b=""}{b=b $0 "\n"}END{printf "%s",b}' "$LOG" | while IFS= read -r l; do t=$(jp "$l" t); c=$(jp "$l" c); case "$t" in start) printf '\033[36m>\033[0m %s\n' "$c";; response) printf '%s\n' "$c";; tool_call) printf '⏺ %s\n' "$c";; error|max_steps) err "$c";; esac; done >&2;}
+append(){ [ "$MSGS" = "[]" ] && MSGS="[$1]" || MSGS=$(printf '%s' "$MSGS" | sed 's/]$//')",$1]";}
 RA='"role":"assistant"' RU='"role":"user"' RT='"role":"tool"'
 TOKEN_IN=0 TOKEN_OUT=0 COST_USD=0
 track_tokens(){ local u a b; u=$(jp "$1" usage)
@@ -380,12 +380,12 @@ _setup(){ local p k m e s u km dm os
 handle_cmd(){ case "$1" in
   /model|/model\ *) local nm; nm=$(printf '%s' "$1" | sed 's|^/model *||')
     [ -n "$nm" ] && { case "$nm" in gpt-*|o1*|o3*|o4*) _set_provider_model openai "$nm";; claude-*) _set_provider_model anthropic "$nm";; *) MODEL="$nm";; esac; info "Model: $MODEL ($PROVIDER)"; } || info "Current: $MODEL ($PROVIDER)"; return 0;;
-  /effort|/effort\ *) local ef; ef=$(printf '%s' "$1" | sed 's|^/effort *||'); [ -n "$ef" ] && { case "$ef" in n) ef=none;; min) ef=minimal;; l) ef=low;; m) ef=medium;; h) ef=high;; x|xh) ef=xhigh;; esac; EFFORT=$ef; }; info "Effort: $EFFORT"; return 0;; /copy) _copy; return 0;; /fork) _fork; return 0;; /quit|/exit) exit 0;;
+  /effort|/effort\ *) local ef; ef=$(printf '%s' "$1" | sed 's|^/effort *||'); [ -n "$ef" ] && { case "$ef" in n) ef=none;; min) ef=minimal;; l) ef=low;; m) ef=medium;; h) ef=high;; x|xh) ef=xhigh;; esac; EFFORT=$ef; }; info "Effort: $EFFORT"; return 0;; /flush) MSGS=""; LAST_RESP=""; [ -n "$HISTORY" ] && printf '[]' > "$HISTORY"; info "Flushed conversation memory"; return 0;; /copy) _copy; return 0;; /fork) _fork; return 0;; /quit|/exit) exit 0;;
   /login) _setup; return 0;; /logout) [ -f "$HOME/.pu.env" ] && rm "$HOME/.pu.env" && info "Removed ~/.pu.env" || info "No ~/.pu.env to remove"; unset ANTHROPIC_API_KEY OPENAI_API_KEY; info "Logged out. /login or set env vars to continue."; return 0;;
   /compact|/compact\ *) MSGS=$(trim_context "$MSGS" "$(printf '%s' "$1" | sed 's|^/compact *||')"); save; info "Compacted (${#MSGS}b)"; return 0;;
   /export|/export\ *) _export "$(printf '%s' "$1" | sed 's|^/export *||')"; return 0;;
   /skill:*) _skill "$(printf '%s' "$1" | sed 's|^/skill:||')"; return 0;;
-  /session) info "Log: $LOG | Model: $MODEL ($PROVIDER) | Steps: $MAX_STEPS"; return 0;;
+  /session) info "Log: $LOG | Model: $MODEL ($PROVIDER) | Max steps: $MAX_STEPS"; return 0;;
   /*) local cn; cn=$(printf '%s' "$1" | sed 's|^/||' | cut -d' ' -f1); local tp; tp=$(_tpl "$cn")
     [ "$tp" != "$cn" ] && { info "Template: $cn"; run_task "$tp"; return 0; }
     err "Unknown command: $1"; return 0;;
@@ -395,6 +395,7 @@ TASK=""; if [ "$PIPE" = 1 ] && [ ! -t 0 ]; then IN=$(cat); [ $# -gt 0 ] && TASK=
 [ -z "$TASK" ] && [ "$INTERACTIVE" != 1 ] && { err "No task. Usage: ./pu.sh \"task\" or ./pu.sh -i"; exit 1; }
 _have_key || { [ -t 0 ] && _setup || { err "No API key. Set ANTHROPIC_API_KEY or OPENAI_API_KEY (https://console.anthropic.com/settings/keys | https://platform.openai.com/api-keys)"; exit 1; }; }
 load_context
-[ -n "$TASK" ] && { info "$TASK"; info "$MODEL ($PROVIDER) $MAX_STEPS steps"; run_task "$TASK"; rc=$?; [ "$INTERACTIVE" = 1 ] || exit "$rc"; } || true
-info "$MODEL ($PROVIDER) | /model /login /logout /copy /compact /export /skill:name /quit | !cmd | @file"
+[ -z "$MSGS" ] && load && { _replay; info "Resumed memory: $HISTORY (/flush to clear)"; } || true
+[ -n "$TASK" ] && { info "$TASK"; info "$MODEL ($PROVIDER) max steps: $MAX_STEPS"; run_task "$TASK"; rc=$?; [ "$INTERACTIVE" = 1 ] || exit "$rc"; } || true
+info "$MODEL ($PROVIDER) | /model /effort /login /logout /flush /copy /compact /export /skill:name /quit | !cmd | @file"
 while true; do _STATE=idle; printf '\033[36m> \033[0m' >&2; read -r INPUT || break; case "$INPUT" in quit|exit|q) break;; ''|' ') continue;; esac; handle_cmd "$INPUT" && continue || true; run_task "$INPUT"; done

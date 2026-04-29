@@ -52,7 +52,7 @@ The answer is a shell script. The agent loop itself — send prompt, parse respo
 | What | How |
 |---|---|
 | **7 tools** | `bash` `read` `write` `edit` `grep` `find` `ls` — Pi-shaped surface area |
-| **Interactive REPL** | Multi-turn with memory; `/model` `/effort` `/login` `/logout` `/copy` `/compact` `/export` `/skill:name` `/quit` |
+| **Interactive REPL** | Multi-turn with memory; `/model` `/effort` `/login` `/logout` `/flush` `/copy` `/compact` `/export` `/skill:name` `/quit` |
 | **First-run login** | API-key wizard for Anthropic/OpenAI, optional private `~/.pu.env` save |
 | **Dual provider** | Anthropic Messages API + OpenAI Responses API |
 | **OpenAI tool loop** | Preserves `reasoning`, `function_call`, and `function_call_output` items across turns |
@@ -66,12 +66,12 @@ The answer is a shell script. The agent loop itself — send prompt, parse respo
 | **!command** | `!ls -la` runs shell inline from the REPL |
 | **Prompt templates** | `/name` expands `.pi/prompts/name.md` or `~/.pi/agent/prompts/name.md` |
 | **Skills** | `/skill:name` loads `SKILL.md` from local or user skill directories |
-| **Session export/fork** | `/export` writes markdown; `/fork` copies the JSONL log |
+| **Session export/fork** | `/export` writes markdown; `/fork` copies `.pu-events.jsonl` |
 | **Pipe mode** | `--pipe` for clean stdout, composable with other tools/agents |
-| **Checkpoint/resume** | `AGENT_HISTORY=file.json` saves and restores transcript state |
+| **Checkpoint/resume** | Writes `.pu-history.json` by default; override with `AGENT_HISTORY=file.json` |
 | **Confirmation mode** | `AGENT_CONFIRM=1` asks before every tool execution; safely denies when no TTY |
-| **JSONL logging** | Every step logged as structured JSON |
-| **Regression tests** | `bash eval/test_real.sh` runs 70 no-API behavioral tests |
+| **Event log** | Every step logged to `.pu-events.jsonl` as structured JSONL |
+| **Regression tests** | `bash eval/test_real.sh` runs 84 no-API behavioral tests |
 
 ## What it can't do
 
@@ -113,15 +113,15 @@ All env vars. Optional `~/.pu.env` is created by `/login`/first run with `0600`-
 | `OPENAI_API_KEY` | — | OpenAI API key |
 | `AGENT_EFFORT` | `medium` | `none|minimal|low|medium|high|xhigh|max`; unsupported models omit effort fields |
 | `AGENT_THINKING` | — | Legacy/Anthropic thinking hint; falls back into effort behavior |
-| `AGENT_MAX_STEPS` | `25` | Safety limit on agent loops |
+| `AGENT_MAX_STEPS` | `100` | Max API/tool-loop steps before stopping |
 | `AGENT_MAX_TOKENS` | `4096` | Base visible-output budget; raised for higher effort |
 | `AGENT_CONTEXT_LIMIT` | `400000` OpenAI-ish / `272000` Opus-ish | Approximate context budget in bytes/chars |
 | `AGENT_RESERVE` | `16000` | Reserved context budget before compaction |
 | `AGENT_TOOL_TRUNC` | `100000` | Max non-read tool output before truncation |
 | `AGENT_READ_MAX` | `1000000` | Require offset/limit for larger file reads |
 | `AGENT_CONFIRM` | `0` | `1` = ask before each tool call |
-| `AGENT_LOG` | `agent.jsonl` | Structured log file |
-| `AGENT_HISTORY` | — | Checkpoint file for resume |
+| `AGENT_LOG` | `.pu-events.jsonl` | Event/debug JSONL log file |
+| `AGENT_HISTORY` | `.pu-history.json` | Checkpoint file for automatic resume |
 | `AGENT_SYSTEM` | built-in | Custom system prompt |
 | `AGENT_PRICE_IN_PER_MTOK` / `AGENT_PRICE_OUT_PER_MTOK` | `0` | Optional cost display with `--cost` |
 | `AGENT_DEBUG_API` | — | Directory to capture per-call input/response JSON for debugging |
@@ -134,10 +134,11 @@ All env vars. Optional `~/.pu.env` is created by `/login`/first run with `0600`-
 | `/effort [level]` | Show or set reasoning effort (`none`, `low`, `medium`, `high`, `xhigh`, etc.) |
 | `/login` | Run API-key setup wizard |
 | `/logout` | Remove `~/.pu.env` and unset in-process keys |
+| `/flush` | Clear conversation memory and reset the history file to `[]` |
 | `/compact [focus]` | Summarize older context, optionally with focus text |
 | `/copy` | Copy last response via `pbcopy` or `xclip` |
-| `/export [file]` | Export JSONL session log to markdown |
-| `/fork` | Copy current JSONL log to a timestamped fork |
+| `/export [file]` | Export event log to markdown |
+| `/fork` | Copy current event log to a timestamped fork |
 | `/skill:name` | Load `name/SKILL.md` into the system prompt |
 | `/quit` | Exit |
 | `!cmd` | Run a shell command directly |
@@ -168,7 +169,7 @@ OpenAI uses `/v1/responses` with Responses-style tools and `max_output_tokens`. 
 ## Testing
 
 ```sh
-# No API calls, no cost. Current expected result: PASS: 70 FAIL: 0.
+# No API calls, no cost. Current expected result: PASS: 84 FAIL: 0.
 bash eval/test_real.sh
 
 # Shell syntax.
@@ -183,7 +184,7 @@ The current regression suite covers:
 - OpenAI tool continuation with `reasoning` + `function_call_output`
 - API-error reporting, curl transport failures, model-error hints, and non-retryable auth errors
 - first-run key sanitization and safe allowlist `~/.pu.env` loading
-- history save of final assistant responses
+- default history save/resume of final assistant responses
 - context compaction invariants
 - tool truncation
 - edit uniqueness/mode preservation

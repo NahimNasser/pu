@@ -50,8 +50,8 @@ They are not in the same category. That is the point.
 | Manual compaction | ✅ | ✅ `/compact [focus]` |
 | Session resume | ✅ session browser / IDs | ⚠️ `AGENT_HISTORY=file.json` only |
 | Session tree | ✅ | ❌ |
-| Session fork | ✅ | ⚠️ copies JSONL log with `/fork` |
-| Export/share | ✅ rich export/share | ⚠️ markdown export from JSONL log |
+| Session fork | ✅ | ⚠️ copies `.pu-events.jsonl` with `/fork` |
+| Export/share | ✅ rich export/share | ⚠️ markdown export from event log |
 | Provider-compatible history metadata | ✅ | ❌ user must avoid mixing incompatible histories |
 
 ## Commands and workflow

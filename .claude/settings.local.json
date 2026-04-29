@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s \"https://api.github.com/repos/block/goose/releases/latest\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('tag:', d.get\\('tag_name'\\)\\); [print\\(a['name'], a['size']\\) for a in d.get\\('assets',[]\\)]\")",
+      "Bash(curl -s \"https://registry.npmjs.org/@anthropic-ai/claude-code/latest\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('version:', d.get\\('version'\\)\\); print\\('unpackedSize:', d.get\\('dist',{}\\).get\\('unpackedSize'\\)\\); print\\('tarball size:', d.get\\('dist',{}\\).get\\('fileCount'\\)\\)\")"
+    ]
+  }
+}

@@ -22,7 +22,7 @@ TMPD=$(mktemp -d); trap 'rm -rf "$TMPD"' EXIT
 sed -n '/^TASK=""/q;p' "$AGENT" > "$TMPD/funcs.sh"
 # shellcheck disable=SC1091
 . "$TMPD/funcs.sh" >/dev/null 2>&1 || true
-set +u
+set +u; HISTORY=
 
 # ── json_escape: control chars + round-trip ────────────────────────
 echo
@@ -450,8 +450,112 @@ printf '%s' "$OUT" | grep -q 'src/a.txt' && ! printf '%s' "$OUT" | grep -q node_
   && pass "ED-13" "find prunes noisy directories" || fail "ED-13" "find exclusions" "got=$OUT"
 PIPE=1; EFFORT=medium; handle_cmd '/effort xh' >/dev/null 2>/dev/null
 [ "$EFFORT" = xhigh ] && pass "ED-14" "/effort changes effort interactively" || fail "ED-14" "/effort" "EFFORT=$EFFORT"
+MSGS='[{"role":"user","content":"hi"}]'; LAST_RESP=hi; HISTORY="$TMPD/flush_hist.json"; handle_cmd '/flush' >/dev/null 2>/dev/null
+[ -z "$MSGS" ] && [ -z "$LAST_RESP" ] && [ "$(cat "$HISTORY")" = '[]' ] \
+  && pass "ED-15" "/flush clears conversation memory and history" || fail "ED-15" "/flush" "MSGS=$MSGS LAST=$LAST_RESP hist=$(cat "$HISTORY")"
+MSGS=x; load >/dev/null 2>/dev/null; RC=$?
+[ $RC -ne 0 ] && [ -z "$MSGS" ] && pass "ED-16" "empty [] history is not treated as resumed" || fail "ED-16" "empty history resume" "rc=$RC MSGS=$MSGS"
+LOG="$TMPD/replay.jsonl"; printf '%s\n' '{"s":0,"t":"start","c":"old"}' '{"s":1,"t":"tool_call","c":"read: {\"path\":\"pu.sh\"}"}' '{"s":2,"t":"response","c":"done"}' > "$LOG"; INTERACTIVE=1
+OUT=$(_replay 2>&1 >/dev/null)
+printf '%s' "$OUT" | grep -q '>.*old' && printf '%s' "$OUT" | grep -q 'read:' && printf '%s' "$OUT" | grep -q done \
+  && pass "ED-17" "resume replay shows last messages" || fail "ED-17" "replay" "out=$OUT"
 
 rm "$F"
+
+# ── Real-world-ish workflows (mocked APIs, real tools/CLI) ─────────
+echo
+printf "${B}━━━ real-world workflows ━━━${N}\n"
+
+# Full CLI startup with fake curl: loads AGENTS.md and expands @file refs into
+# the actual API request payload.
+cat > "$TMPD/bin/curl" <<'EOF'
+#!/bin/sh
+while [ $# -gt 0 ]; do
+  if [ "$1" = -d ]; then shift; printf '%s' "$1" > "${PU_CAPTURE:?}"; fi
+  shift
+done
+printf '%s' '{"output_text":"cli ok","usage":{"input_tokens":1,"output_tokens":1}}'
+EOF
+chmod +x "$TMPD/bin/curl"
+CLI_PROJ="$TMPD/cli project"; mkdir -p "$CLI_PROJ"
+printf 'Project rule: always mention ACME-42.\n' > "$CLI_PROJ/AGENTS.md"
+printf 'incident id: INC-123\nroot cause: cache stampede\n' > "$CLI_PROJ/input.md"
+CAP="$TMPD/cli_payload.json"
+CLI_OUT=$(cd "$CLI_PROJ" && PATH="$TMPD/bin:$PATH" PU_CAPTURE="$CAP" OPENAI_API_KEY=dummy AGENT_PROVIDER=openai AGENT_MODEL=gpt-4o AGENT_LOG="$TMPD/cli.jsonl" "$AGENT" -n 'Summarize @input.md for the changelog' 2>/dev/null); CLI_RC=$?
+[ $CLI_RC -eq 0 ] && [ "$CLI_OUT" = "cli ok" ] && [ -s "$CLI_PROJ/.pu-history.json" ] && json_field "$(cat "$CAP")" 'assert "Project rule: always mention ACME-42" in d["instructions"] and "[file: input.md]" in d["input"][0]["content"] and "cache stampede" in d["input"][0]["content"]' \
+  && pass "RW-1" "CLI loads context/@file and writes default history" \
+  || fail "RW-1" "CLI context/@file/history integration" "rc=$CLI_RC out=$CLI_OUT payload=$(cat "$CAP" 2>/dev/null)"
+
+CAP="$TMPD/pipe_payload.json"
+printf 'stdin review notes\n' | (cd "$CLI_PROJ" && PATH="$TMPD/bin:$PATH" PU_CAPTURE="$CAP" OPENAI_API_KEY=dummy AGENT_PROVIDER=openai AGENT_MODEL=gpt-4o "$AGENT" --pipe 'plus suffix' >/dev/null 2>"$TMPD/pipe.err"); CLI_RC=$?
+[ $CLI_RC -eq 0 ] && json_field "$(cat "$CAP")" 'assert d["input"][1]["content"] == "cli ok"; c=d["input"][-1]["content"]; assert "stdin review notes" in c and "plus suffix" in c' \
+  && pass "RW-2" "--pipe resumes default history and combines stdin with task suffix" \
+  || fail "RW-2" "pipe task composition/resume" "rc=$CLI_RC err=$(cat "$TMPD/pipe.err") payload=$(cat "$CAP" 2>/dev/null)"
+
+# Anthropic-style multi-step workflow: model asks to write a file with a
+# realistic path/content, reads it back, then returns a final answer.
+RW_DIR="$TMPD/rw project"; mkdir -p "$RW_DIR"; OLD_PWD=$(pwd); cd "$RW_DIR" || exit 1
+PIPE=1; CONFIRM=0; MSGS=; HISTORY=; LOG="$TMPD/rw_anthropic.jsonl"; MAX_STEPS=5
+PROVIDER=anthropic; MODEL=claude-opus-4-7; EFFORT_OK=1; TOKEN_IN=0; TOKEN_OUT=0; COST_USD=0
+RW_COUNT="$TMPD/rw_anth.count"; printf 0 > "$RW_COUNT"
+call_api(){ RW_N=$(( $(cat "$RW_COUNT") + 1 )); printf '%s' "$RW_N" > "$RW_COUNT"; case "$RW_N" in
+  1) printf '%s' '{"content":[{"type":"text","text":"I will create the note."},{"type":"tool_use","id":"toolu_write","name":"write","input":{"path":"notes/plan \u00fc.txt","content":"alpha\nbeta \"quoted\"\n"}}],"usage":{"input_tokens":10,"output_tokens":5}}' ;;
+  2) printf '%s' '{"content":[{"type":"tool_use","id":"toolu_read","name":"read","input":{"path":"notes/plan \u00fc.txt","offset":1,"limit":5}}],"usage":{"input_tokens":10,"output_tokens":5}}' ;;
+  *) printf '%s' '{"content":[{"type":"text","text":"Created and verified notes/plan \u00fc.txt."}],"usage":{"input_tokens":10,"output_tokens":5}}' ;;
+ esac; }
+RW_OUT=$(run_task "Create and verify a release note" 2>"$TMPD/rw_anth.err"); RW_RC=$?
+cd "$OLD_PWD" || exit 1
+[ $RW_RC -eq 0 ] && [ "$(cat "$RW_DIR/notes/plan ü.txt" 2>/dev/null)" = $'alpha\nbeta "quoted"' ] \
+  && pass "RW-3" "anthropic workflow writes realistic file path/content" \
+  || fail "RW-3" "anthropic write/read workflow" "rc=$RW_RC out=$RW_OUT err=$(cat "$TMPD/rw_anth.err")"
+printf '%s' "$RW_OUT" | grep -q 'Created and verified' \
+  && pass "RW-4" "anthropic workflow surfaces final answer" \
+  || fail "RW-4" "anthropic final output" "out=$RW_OUT"
+TCALLS=$(grep -c '"t":"tool_call"' "$TMPD/rw_anthropic.jsonl" 2>/dev/null || echo 0)
+[ "$TCALLS" -ge 2 ] \
+  && pass "RW-5" "anthropic workflow logs multiple tool calls" \
+  || fail "RW-5" "anthropic tool logging" "calls=$TCALLS log=$(cat "$TMPD/rw_anthropic.jsonl" 2>/dev/null)"
+
+# OpenAI Responses-style workflow: function_call items are looped back alongside
+# function_call_output, with a checkpoint history file saved at the end.
+RW_DIR2="$TMPD/rw openai"; mkdir -p "$RW_DIR2"; OLD_PWD=$(pwd); cd "$RW_DIR2" || exit 1
+PIPE=1; CONFIRM=0; MSGS=; HISTORY="$TMPD/rw_openai_history.json"; LOG="$TMPD/rw_openai.jsonl"; MAX_STEPS=5
+PROVIDER=openai; MODEL=gpt-5.5; EFFORT=none; EFFORT_OK=1; TOKEN_IN=0; TOKEN_OUT=0; COST_USD=0
+RW_COUNT="$TMPD/rw_openai.count"; printf 0 > "$RW_COUNT"
+call_api(){ RW_N=$(( $(cat "$RW_COUNT") + 1 )); printf '%s' "$RW_N" > "$RW_COUNT"; case "$RW_N" in
+  1) printf '%s' '{"output":[{"type":"reasoning","id":"rs_1","summary":[]},{"type":"function_call","id":"fc_1","call_id":"call_write","name":"write","arguments":"{\"path\":\"src/app.txt\",\"content\":\"hello from openai\nbrace { ok }\n\"}","status":"completed"}],"usage":{"input_tokens":10,"output_tokens":5}}' ;;
+  2) printf '%s' '{"output":[{"type":"function_call","id":"fc_2","call_id":"call_read","name":"read","arguments":"{\"path\":\"src/app.txt\"}","status":"completed"}],"usage":{"input_tokens":10,"output_tokens":5}}' ;;
+  *) printf '%s' '{"output_text":"OpenAI workflow done.","usage":{"input_tokens":10,"output_tokens":5}}' ;;
+ esac; }
+RW_OUT=$(run_task "Create and verify app artifact" 2>"$TMPD/rw_openai.err"); RW_RC=$?
+cd "$OLD_PWD" || exit 1
+EXPECTED_OPENAI=$'hello from openai\nbrace { ok }'
+[ $RW_RC -eq 0 ] && [ "$(cat "$RW_DIR2/src/app.txt" 2>/dev/null)" = "$EXPECTED_OPENAI" ] \
+  && pass "RW-6" "openai workflow writes multiline quoted content" \
+  || fail "RW-6" "openai write/read workflow" "rc=$RW_RC out=$RW_OUT err=$(cat "$TMPD/rw_openai.err") file=$(cat "$RW_DIR2/src/app.txt" 2>/dev/null)"
+printf '%s' "$RW_OUT" | grep -q 'OpenAI workflow done' \
+  && pass "RW-7" "openai workflow surfaces final answer" \
+  || fail "RW-7" "openai final output" "out=$RW_OUT"
+valid_json "$(cat "$HISTORY")" && json_field "$(cat "$HISTORY")" 'assert d[-1]["role"] == "assistant" and d[-1]["content"] == "OpenAI workflow done."' \
+  && pass "RW-8" "openai workflow saves valid checkpoint history" \
+  || fail "RW-8" "openai checkpoint history" "hist=$(cat "$HISTORY" 2>/dev/null)"
+
+# Tool behavior that resembles common repo work: large files require ranged
+# reads, and failing shell commands preserve the exit code in tool output.
+PIPE=1; CONFIRM=0; AGENT_READ_MAX=20
+BIG="$TMPD/big.log"; printf 'line 1\nline 2\nline 3\nline 4\n' > "$BIG"
+OUT=$(run_tool read "{\"path\":\"$BIG\"}")
+printf '%s' "$OUT" | grep -q 'pass offset/limit' \
+  && pass "RW-9" "read refuses oversized file without range" \
+  || fail "RW-9" "large read guard" "out=$OUT"
+OUT=$(run_tool read "{\"path\":\"$BIG\",\"offset\":2,\"limit\":2}")
+[ "$OUT" = $'line 2\nline 3' ] \
+  && pass "RW-10" "read offset/limit returns requested range" \
+  || fail "RW-10" "range read" "out=$OUT"
+OUT=$(run_tool bash '{"command":"printf before; exit 7"}')
+printf '%s' "$OUT" | grep -q '\[exit:7\]' \
+  && pass "RW-11" "bash tool includes nonzero exit code" \
+  || fail "RW-11" "bash exit status" "out=$OUT"
 
 # ── Summary ────────────────────────────────────────────────────────
 echo

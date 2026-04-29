@@ -7,7 +7,7 @@ Current validation:
 ```sh
 sh -n pu.sh
 bash eval/test_real.sh
-# PASS: 70 FAIL: 0 TOTAL: 70
+# PASS: 84 FAIL: 0 TOTAL: 84
 ```
 
 Current size:
@@ -281,7 +281,7 @@ The script uses `local` under `#!/bin/sh`. This works in common shells used as `
 
 ### 6. History has no provider/model metadata
 
-`AGENT_HISTORY` stores only the message array. Reusing history across providers can mix incompatible Anthropic/OpenAI transcript items.
+`.pu-history.json` / `AGENT_HISTORY` stores only the message array. Reusing history across providers can mix incompatible Anthropic/OpenAI transcript items.
 
 **Possible next step:** sidecar metadata or a wrapper object with provider/model.
 
