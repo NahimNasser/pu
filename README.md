@@ -8,7 +8,7 @@
 
 ```sh
 curl -sL https://raw.githubusercontent.com/NahimNasser/pu/main/pu.sh -o pu.sh && chmod +x pu.sh
-./pu.sh "refactor auth.py to use JWT"
+./pu.sh
 ```
 
 That's the entire install. No npm. No pip. No Docker. No runtime. One shell file, common Unix tools, `curl`, `awk`, and an API key.
