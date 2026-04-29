@@ -1,53 +1,54 @@
 #!/bin/sh
-# pu.sh — portable agentic harness. sh + curl. Zero dependencies beyond POSIX.
-# Usage: ./pu.sh "task" | ./pu.sh (interactive) | ./pu.sh --pipe "review"
+# pu.sh — portable agentic harness. common sh + curl + awk. Usage: ./pu.sh "task" | ./pu.sh | ./pu.sh --pipe "review"
 set -u
-_STATE=idle _CHILD=0 SPIN_PID=""
-_spinner(){ tput civis 2>/dev/null; while :;do
-  for f in '[   ]' '[=  ]' '[== ]' '[===]' '[ ==]' '[  =]';do printf '\r\033[K%s' "$f" >&2;sleep 0.15;done;done;}
-spin_start(){ [ -t 2 ]||return 0;[ -n "$SPIN_PID" ]&&return 0;_spinner& SPIN_PID=$!;}
-spin_stop(){ [ -n "$SPIN_PID" ]&&{ kill "$SPIN_PID" 2>/dev/null;wait "$SPIN_PID" 2>/dev/null;SPIN_PID="";};printf '\r\033[K' >&2;tput cnorm 2>/dev/null||true;}
-_interrupt(){ spin_stop; if [ "$_STATE" = busy ]; then
-  [ $_CHILD -ne 0 ] && kill $_CHILD 2>/dev/null && wait $_CHILD 2>/dev/null; _CHILD=0
-  _STATE=idle
-  else exit 130; fi;}
-trap '_interrupt' INT; trap '' PIPE
-MODEL="${AGENT_MODEL:-claude-sonnet-4-20250514}" PROVIDER="${AGENT_PROVIDER:-anthropic}"
-MAX_STEPS="${AGENT_MAX_STEPS:-25}" MAX_TOKENS="${AGENT_MAX_TOKENS:-4096}"
-LOG="${AGENT_LOG:-agent.jsonl}" HISTORY="${AGENT_HISTORY:-}" CONFIRM="${AGENT_CONFIRM:-0}"
-CTX_LIMIT="${AGENT_CONTEXT_LIMIT:-100000}" VERBOSE="${AGENT_VERBOSE:-0}" THINKING="${AGENT_THINKING:-}"
-PIPE=0 COST=0 INTERACTIVE=0
+_STATE=idle _CHILD=0 SPIN_PID="" SPIN_MSG=""
+_spinner(){ tput civis >&2 2>/dev/null; while :;do for f in '[   ]' '[=  ]' '[== ]' '[===]' '[ ==]' '[  =]';do printf '\r\033[K%s %s' "$f" "$SPIN_MSG" >&2;sleep 0.15;done;done;}
+spin_start(){ [ -t 2 ]||return 0;SPIN_MSG="$*";[ -n "$SPIN_PID" ]&&return 0;_spinner& SPIN_PID=$!;}
+spin_stop(){ [ -n "$SPIN_PID" ]&&{ kill "$SPIN_PID" 2>/dev/null;wait "$SPIN_PID" 2>/dev/null;SPIN_PID="";};[ -t 2 ]&&{ printf '\r\033[K' >&2;tput cnorm >&2 2>/dev/null||true;};}
+_interrupt(){ spin_stop; if [ "$_STATE" = busy ]; then [ $_CHILD -ne 0 ] && kill $_CHILD 2>/dev/null && wait $_CHILD 2>/dev/null; _CHILD=0; _STATE=idle; else exit 130; fi;}
+trap '_interrupt' INT; trap '' PIPE; [ -z "${ANTHROPIC_API_KEY:-}${OPENAI_API_KEY:-}" ] && [ -f "$HOME/.pu.env" ] && . "$HOME/.pu.env"
+_clean_key(){ printf '%s' "$1" | sed 's/^OPENAI_API_KEY=//;s/^ANTHROPIC_API_KEY=//;s/^"//;s/"$//;s/^'\''//;s/'\''$//' | tr -d '[:space:]'; }
+[ -n "${OPENAI_API_KEY:-}" ] && OPENAI_API_KEY=$(_clean_key "$OPENAI_API_KEY"); [ -n "${ANTHROPIC_API_KEY:-}" ] && ANTHROPIC_API_KEY=$(_clean_key "$ANTHROPIC_API_KEY")
+if [ -n "${AGENT_PROVIDER:-}" ]; then PROVIDER=$AGENT_PROVIDER; else case "${AGENT_MODEL:-}" in gpt-*|o1*|o3*|o4*) PROVIDER=openai;; claude-*) PROVIDER=anthropic;; *) [ -n "${OPENAI_API_KEY:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ] && PROVIDER=openai || PROVIDER=anthropic;; esac; fi
+case "$PROVIDER" in openai) MODEL="${AGENT_MODEL:-gpt-5.5}";; *) MODEL="${AGENT_MODEL:-claude-opus-4-7}";; esac
+MAX_STEPS="${AGENT_MAX_STEPS:-25}" MAX_TOKENS="${AGENT_MAX_TOKENS:-4096}" AGENT_RESERVE="${AGENT_RESERVE:-16000}" AGENT_TOOL_TRUNC="${AGENT_TOOL_TRUNC:-100000}" AGENT_READ_MAX="${AGENT_READ_MAX:-1000000}" LOG="${AGENT_LOG:-agent.jsonl}" HISTORY="${AGENT_HISTORY:-}" CONFIRM="${AGENT_CONFIRM:-0}"
+CTX_LIMIT="${AGENT_CONTEXT_LIMIT:-400000}" VERBOSE="${AGENT_VERBOSE:-1}" THINKING="${AGENT_THINKING:-}" EFFORT="${AGENT_EFFORT:-${AGENT_THINKING:-medium}}" EFFORT_OK=0
+case "$PROVIDER:$MODEL" in openai:gpt-5.5*) EFFORT_OK=1;; anthropic:claude-opus-4-7*) [ -z "${AGENT_CONTEXT_LIMIT:-}" ] && CTX_LIMIT=272000; EFFORT_OK=1;; anthropic:claude-opus-4-6*|anthropic:claude-sonnet-4-6*|anthropic:claude-opus-4-5*) EFFORT_OK=1;; esac
+PIPE=0 COST=0 INTERACTIVE=0 MSGS=""
 SYSTEM="${AGENT_SYSTEM:-You are an expert coding assistant. You help users by reading files, executing commands, editing code, and writing new files.
 Available tools:
 - read: Read file contents. Use offset/limit for large files.
-- bash: Execute bash commands (ls, grep, find, etc.)
+- bash: Run shell commands. Use this only for actions not covered by the dedicated tools below.
 - edit: Make precise file edits with exact text replacement via oldText/newText
 - write: Create or overwrite files. Automatically creates parent directories.
 - grep: Search file contents for patterns
 - find: Find files by glob pattern
 - ls: List directory contents
 Guidelines:
+- Prefer the grep/find/ls tools over bash for file exploration. Faster and no need to cd.
+- Working directory is already set ($(pwd)); do not cd inside bash commands.
+- Combine related searches into one grep call using alternation (pat1|pat2|pat3) instead of issuing each as a separate call.
 - Use read to examine files instead of cat or sed.
 - Use write only for new files or complete rewrites. Never use bash with cat/heredoc/echo to create files.
 - Use edit for precise changes (oldText must match exactly). Keep oldText as small as possible while still unique.
+- Before tool calls, briefly say what you are checking or changing.
 - Be concise in your responses.
 - Show file paths clearly when working with files.
 Current date: $(date +%Y-%m-%d)
 Current working directory: $(pwd)
 Your source code is at $(cd "$(dirname "$0")" && pwd)/$(basename "$0"). Use the read tool to inspect it if asked about your own capabilities or configuration.}"
-case "${1:-}" in -h|--help) cat<<'HELP'
+while [ $# -gt 0 ]; do case "$1" in -h|--help) cat<<'HELP'
 pu.sh — portable agentic harness (sh+curl, no deps)
 Usage: ./pu.sh "task" | ./pu.sh (interactive) | --pipe | --cost | -v
 Env: ANTHROPIC_API_KEY OPENAI_API_KEY AGENT_MODEL AGENT_PROVIDER AGENT_SYSTEM
- AGENT_MAX_STEPS AGENT_MAX_TOKENS AGENT_LOG AGENT_CONFIRM AGENT_VERBOSE
- AGENT_CONTEXT_LIMIT AGENT_RESERVE AGENT_TOOL_TRUNC
- AGENT_HISTORY(checkpoint) AGENT_THINKING(off/low/medium/high)
+ AGENT_MAX_STEPS AGENT_MAX_TOKENS AGENT_LOG AGENT_CONFIRM AGENT_VERBOSE AGENT_CONTEXT_LIMIT
+ AGENT_RESERVE AGENT_TOOL_TRUNC AGENT_READ_MAX AGENT_HISTORY AGENT_THINKING/AGENT_EFFORT AGENT_PRICE_* ~/.pu.env
 7 tools, multi-turn, retries, JSONL logging, pipe mode, @file refs, !command
-Auto-compaction (Pi-style): summarizes older turns when context fills.
-/compact [focus] manually triggers it.
+Auto-compaction summarizes older turns when context fills; /compact [focus] runs it manually.
 HELP
-exit 0;;-v|--version)echo "pu.sh 1.0.0";exit 0;;--pipe|-p)PIPE=1;shift;;--cost)COST=1;shift;;-i)INTERACTIVE=1;shift;;-n|--no-interactive)INTERACTIVE=-1;shift;;esac
+exit 0;;-v|--version)echo "pu.sh 1.0.0";exit 0;;--pipe|-p)PIPE=1;shift;;--cost)COST=1;shift;;-i)INTERACTIVE=1;shift;;-n|--no-interactive)INTERACTIVE=-1;shift;;*)break;;esac;done
 for _dep in curl awk;do command -v $_dep >/dev/null 2>&1||{ printf '\033[31m[!] %s not found\033[0m\n' "$_dep" >&2;exit 1;};done
+RUNSH=$(command -v bash 2>/dev/null||echo sh)
 jp(){
   printf '%s' "$1" | awk -v k="$2" 'BEGIN{RS="\0"}{
     tgt="\"" k "\"" ":"
@@ -63,7 +64,7 @@ jp(){
         o=o substr(s,1,p-1)
         if(bs%2==1){o=o "\"";s=substr(s,p+1);continue}; break
       }
-      gsub(/\\n/,"\n",o); gsub(/\\t/,"\t",o); gsub(/\\\\/,"\\",o); gsub(/\\"/,"\"",o)
+      gsub(/\\\\/,"\001",o); gsub(/\\n/,"\n",o); gsub(/\\t/,"\t",o); gsub(/\\r/,"\r",o); gsub(/\\u2019/,"\047",o); gsub(/\\u201c|\\u201d/,"\"",o); gsub(/\\u2013|\\u2014/,"-",o); gsub(/\\"/,"\"",o); gsub(/\001/,"\\",o)
       printf "%s",o
     } else if(c=="[" || c=="{"){
       d=1; s=substr(s,2); o=c; q=0; e=0
@@ -102,11 +103,25 @@ j1st(){
     }; print o
   }'
 }
+each_tool_use(){ printf '%s' "$1" | awk -v m="$2" 'BEGIN{RS="\0"}{s=$0
+  while((p=index(s,m))>0){
+    for(i=p-1;i>=1;i--) if(substr(s,i,1)=="{") break
+    d=0;q=0;e=0;o=""
+    for(j=i;j<=length(s);j++){c=substr(s,j,1);o=o c
+      if(e){e=0;continue}; if(c=="\\"){e=1;continue}
+      if(c=="\""){q=!q;continue}; if(q)continue
+      if(c=="{")d++; else if(c=="}")d--; if(d==0)break}
+    print o; s=substr(s,j+1)}}';}
 json_escape(){ printf '%s' "$1" | LC_ALL=C tr -d '\000-\010\013\014\016-\037' | awk '{gsub(/\\/,"\\\\")} {gsub(/"/,"\\\"")} {gsub(/\t/,"\\t")} {gsub(/\r/,"\\r")} NR>1{printf "\\n"} {printf "%s",$0}';}
-info(){ [ "$PIPE" = 0 ] && printf '\033[36m[pu]\033[0m %s\n' "$*" >&2 || true;}
-err(){ printf '\033[31m[!] %s\033[0m\n' "$*" >&2;}
-dbg(){ [ "$VERBOSE" = 1 ] && printf '[v] %s\n' "$*" >&2 || true;}
+info(){ [ "$PIPE" = 0 ] && printf '\r\033[K\033[36m[pu]\033[0m %s\n' "$*" >&2 || true;}
+err(){ printf '\r\033[K\033[31m[!] %s\033[0m\n' "$*" >&2;}
+dbg(){ [ "$VERBOSE" = 1 ] && printf '\r\033[K[v] %s\n' "$*" >&2 || true;}
+_p(){ case "$1" in "$PWD"/*) printf '%s' "${1#"$PWD"/}";; "$HOME"/*) printf '~%s' "${1#"$HOME"}";; *) printf '%s' "$1";; esac;}
+_tool(){ [ "$PIPE" = 0 ] && printf '\r\033[K\033[2m⏺\033[0m \033[36m%s\033[0m \033[2m%s\033[0m\n' "$1" "$2" >&2 || true;}
+_say(){ [ "$PIPE" = 0 ] && printf '\r\033[K%s\n' "$1" >&2 || true;}
 log(){ printf '{"s":%s,"t":"%s","c":"%s"}\n' "$1" "$2" "$(json_escape "$3")" >> "$LOG";}
+_num(){ case "$2" in ''|*[!0-9]*) err "$1 must be a non-negative integer"; exit 1;; esac; }
+for _nv in MAX_STEPS:$MAX_STEPS MAX_TOKENS:$MAX_TOKENS CTX_LIMIT:$CTX_LIMIT AGENT_RESERVE:$AGENT_RESERVE AGENT_TOOL_TRUNC:$AGENT_TOOL_TRUNC AGENT_READ_MAX:$AGENT_READ_MAX; do _num "${_nv%%:*}" "${_nv#*:}"; done
 SP='{"type":"object","properties":{"command":{"type":"string","description":"Shell command"}},"required":["command"]}'
 RP='{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","description":"Start line"},"limit":{"type":"integer","description":"Max lines"}},"required":["path"]}'
 WP='{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}'
@@ -116,22 +131,25 @@ FP='{"type":"object","properties":{"path":{"type":"string"},"name":{"type":"stri
 LP='{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}'
 TD='{"name":"bash","description":"Run a shell command","input_schema":'$SP'},{"name":"read","description":"Read file contents","input_schema":'$RP'},{"name":"write","description":"Write content to file, creates dirs","input_schema":'$WP'},{"name":"edit","description":"Edit file with exact text replacement","input_schema":'$EP'},{"name":"grep","description":"Search for pattern in files","input_schema":'$GP'},{"name":"find","description":"Find files by name glob","input_schema":'$FP'},{"name":"ls","description":"List directory","input_schema":'$LP'}'
 TF='{"type":"function","function":{"name":"bash","description":"Run a shell command","parameters":'$SP'}},{"type":"function","function":{"name":"read","description":"Read file contents","parameters":'$RP'}},{"type":"function","function":{"name":"write","description":"Write content to file","parameters":'$WP'}},{"type":"function","function":{"name":"edit","description":"Edit file with exact text replacement","parameters":'$EP'}},{"type":"function","function":{"name":"grep","description":"Search for pattern","parameters":'$GP'}},{"type":"function","function":{"name":"find","description":"Find files","parameters":'$FP'}},{"type":"function","function":{"name":"ls","description":"List directory","parameters":'$LP'}}'
-think_param(){ case "$THINKING" in low) echo ',"thinking":{"type":"enabled","budget_tokens":1024}';;medium) echo ',"thinking":{"type":"enabled","budget_tokens":4096}';;high|xhigh) echo ',"thinking":{"type":"enabled","budget_tokens":10000}';;*) echo '';;esac;}
-call_api(){ local sys_esc; sys_esc=$(json_escape "$SYSTEM"); local tp; tp=$(think_param)
+RF='{"type":"function","name":"bash","description":"Run a shell command","parameters":'$SP',"strict":false},{"type":"function","name":"read","description":"Read file contents","parameters":'$RP',"strict":false},{"type":"function","name":"write","description":"Write content to file","parameters":'$WP',"strict":false},{"type":"function","name":"edit","description":"Edit file with exact replacement","parameters":'$EP',"strict":false},{"type":"function","name":"grep","description":"Search for pattern","parameters":'$GP',"strict":false},{"type":"function","name":"find","description":"Find files","parameters":'$FP',"strict":false},{"type":"function","name":"ls","description":"List directory","parameters":'$LP',"strict":false}'
+think_param(){ case "$PROVIDER:$MODEL" in anthropic:claude-opus-4-7*|anthropic:claude-opus-4-6*|anthropic:claude-sonnet-4-6*|anthropic:claude-opus-4-5*) echo ',"effort":"'$EFFORT'","thinking":{"type":"adaptive"}';; *) case "$THINKING" in low) echo ',"thinking":{"type":"enabled","budget_tokens":1024}';;medium) echo ',"thinking":{"type":"enabled","budget_tokens":4096}';;high|xhigh|max) echo ',"thinking":{"type":"enabled","budget_tokens":10000}';;*) echo '';;esac;; esac;}
+call_api(){ local sys_esc; sys_esc=$(json_escape "$SYSTEM"); local tp mt=$MAX_TOKENS eb="${THINKING:-}"; tp=$(think_param)
+  [ "$EFFORT_OK" = 1 ] && eb="${eb:-$EFFORT}"; case "$eb" in minimal|low) [ $mt -lt 4096 ] && mt=4096;; medium) [ $mt -lt 8192 ] && mt=8192;; high) [ $mt -lt 16000 ] && mt=16000;; xhigh|max) [ $mt -lt 32000 ] && mt=32000;; esac
   case "$PROVIDER" in
   anthropic) curl -sS -m120 \
-    -H "x-api-key:${ANTHROPIC_API_KEY:-}" \
+    -H "x-api-key: ${ANTHROPIC_API_KEY:-}" \
     -H anthropic-version:2023-06-01 \
     -H content-type:application/json \
-    -d "{\"model\":\"$MODEL\",\"max_tokens\":$MAX_TOKENS,\"system\":\"$sys_esc\",\"tools\":[$TD],\"messages\":$1${tp}}" \
+    -d "{\"model\":\"$MODEL\",\"max_tokens\":$mt,\"system\":\"$sys_esc\",\"tools\":[$TD],\"messages\":$1${tp}}" \
     https://api.anthropic.com/v1/messages 2>&1;;
-  openai) curl -sS -m120 \
-    -H "Authorization:Bearer ${OPENAI_API_KEY:-}" \
+  openai) local rp=''; [ "$EFFORT_OK" = 1 ] && case "$EFFORT" in ''|none) ;; *) rp=',"reasoning":{"effort":"'$EFFORT'"}';; esac
+    curl -sS -m120 \
+    -H "Authorization: Bearer ${OPENAI_API_KEY:-}" \
     -H content-type:application/json \
-    -d "{\"model\":\"$MODEL\",\"max_tokens\":$MAX_TOKENS,\"messages\":[{\"role\":\"system\",\"content\":\"$sys_esc\"},$1],\"tools\":[$TF]}" \
-    https://api.openai.com/v1/chat/completions 2>&1;;
+    -d "{\"model\":\"$MODEL\",\"max_output_tokens\":$mt${rp},\"instructions\":\"$sys_esc\",\"input\":$1,\"tools\":[$RF]}" \
+    https://api.openai.com/v1/responses 2>&1;;
   esac;}
-parse_response(){ local resp="$1"; TY= TN= TI= TX= CB= TINP=
+parse_response(){ local resp="$1"; TY= TN= TI= TX= CB= TINP= TC=
   if [ "$PROVIDER" = anthropic ]; then
     local tu; tu=$(jb "$resp" "tool_use")
     if [ -n "$tu" ]; then
@@ -142,87 +160,100 @@ parse_response(){ local resp="$1"; TY= TN= TI= TX= CB= TINP=
       TY=X; local tt; tt=$(jb "$resp" "text"); TX=$(jp "$tt" text)
     fi
   else
-    local msg; msg=$(j1st "$(jp "$resp" choices)")
-    msg=$(jp "$msg" message)
-    local tc; tc=$(jp "$msg" tool_calls)
-    if [ -n "$tc" ] && [ "$tc" != "null" ]; then
-      TY=T; local call; call=$(j1st "$tc")
-      TI=$(jp "$call" id)
-      local fn; fn=$(jp "$call" function)
-      TN=$(jp "$fn" name); TINP=$(jp "$fn" arguments)
-      TX=$(jp "$msg" content)
+    TC=$(jp "$resp" output); local call; call=$(jb "$TC" function_call)
+    if [ -n "$call" ]; then
+      TY=T; TI=$(jp "$call" call_id); [ -z "$TI" ] && TI=$(jp "$call" id)
+      TN=$(jp "$call" name); TINP=$(jp "$call" arguments); local tt; tt=$(jb "$resp" output_text); TX=$(jp "$tt" text)
     else
-      TY=X; TX=$(jp "$msg" content)
+      TY=X; local tt; tt=$(jb "$resp" output_text); TX=$(jp "$tt" text); TC=
     fi
   fi;}
 run_tool(){ local tool_name="$1" input="$2"
-  [ "$CONFIRM" = 1 ] && {
+  [ "$CONFIRM" = 1 ] && { { : </dev/tty; } 2>/dev/null || { echo "[denied: no tty]"; return 0; }
     printf '\033[33m[?] %s: %s\033[0m [y/N] ' "$tool_name" "$(printf '%s' "$input" | head -c 80)" >&2
-    read -r yn; [ "$yn" = y ] || [ "$yn" = Y ] || { echo "[denied]"; return 0; }
-  }
+    read -r yn </dev/tty; [ "$yn" = y ] || [ "$yn" = Y ] || { echo "[denied]"; return 0; }; }
   local out="" rc=0
   case "$tool_name" in
     bash)
-      local cmd; cmd=$(jp "$input" command)
-      info "\$ $cmd"
+      local cmd; cmd=$(jp "$input" command); _tool bash "$cmd"
       local tf; tf=$(mktemp); printf '%s\n' "$cmd" > "$tf"
-      out=$(sh "$tf" 2>&1) && rc=0 || rc=$?; rm -f "$tf"
+      out=$("$RUNSH" "$tf" 2>&1) && rc=0 || rc=$?; rm -f "$tf"
       [ $rc -ne 0 ] && out="$out
 [exit:$rc]";;
     read)
-      local fp; fp=$(jp "$input" path)
-      local off; off=$(jp "$input" offset)
-      local lim; lim=$(jp "$input" limit)
-      info "read: $fp"
+      local fp; fp=$(jp "$input" path); case "$fp" in -*) fp="./$fp";; esac
+      local off; off=$(jp "$input" offset); [ "$off" = 0 ] && off=1
+      local lim; lim=$(jp "$input" limit); _tool read "$(_p "$fp")"
       if [ -f "$fp" ]; then
-        if [ -n "$off" ] && [ -n "$lim" ]; then out=$(sed -n "${off},$((off+lim-1))p" "$fp")
-        elif [ -n "$off" ]; then out=$(sed -n "${off},\$p" "$fp")
-        elif [ -n "$lim" ]; then out=$(head -n "$lim" "$fp")
-        else out=$(cat "$fp"); fi
+        case "$off" in ""|*[!0-9]*) [ -z "$off" ] || { out="Error: offset must be a positive integer"; rc=1; };; 0) off=1;; esac
+        case "$lim" in ""|*[!0-9]*) [ -z "$lim" ] || { out="Error: limit must be a positive integer"; rc=1; };; 0) out=""; rc=0;; esac
+        if [ $rc -eq 0 ] && [ "$lim" = 0 ]; then :
+        elif [ $rc -eq 0 ]; then local sz; sz=$(wc -c < "$fp")
+          if [ -z "$off" ] && [ -z "$lim" ] && [ "$sz" -gt "$AGENT_READ_MAX" ]; then
+            out="Error: $fp is $sz bytes — pass offset/limit to read a range"; rc=1
+          elif [ -n "$off" ] && [ -n "$lim" ]; then out=$(sed -n "${off},$((off+lim-1))p" "$fp")
+          elif [ -n "$off" ]; then out=$(sed -n "${off},\$p" "$fp")
+          elif [ -n "$lim" ]; then out=$(head -n "$lim" "$fp")
+          else out=$(cat "$fp"); fi
+        fi
       else out="Error: file not found: $fp"; rc=1; fi;;
     write)
-      local fp; fp=$(jp "$input" path)
-      local ct; ct=$(jp "$input" content)
-      info "write: $fp"
-      mkdir -p "$(dirname "$fp")" 2>/dev/null
-      printf '%s\n' "$ct" > "$fp" && out="Wrote to $fp" || { out="Error writing $fp"; rc=1; };;
+      local fp; fp=$(jp "$input" path); case "$fp" in -*) fp="./$fp";; esac
+      local ct; ct=$(jp "$input" content; printf x); ct=${ct%x}
+      _tool write "$(_p "$fp")"
+      if ! mkdir -p "$(dirname "$fp")" 2>/dev/null; then
+        out="Error creating directory for $fp"; rc=1
+      else
+        printf '%s' "$ct" > "$fp" && out="Wrote to $fp" || { out="Error writing $fp"; rc=1; }
+      fi;;
     edit)
-      local fp; fp=$(jp "$input" path)
-      local old; old=$(jp "$input" oldText)
-      local new; new=$(jp "$input" newText)
-      info "edit: $fp"
-      if [ -f "$fp" ]; then
-        if grep -qF "$old" "$fp"; then
-          OLD="$old" NEW="$new" awk 'BEGIN{RS="\0";ORS="";o=ENVIRON["OLD"];n=ENVIRON["NEW"]}{i=index($0,o);while(i>0){printf "%s%s",substr($0,1,i-1),n;$0=substr($0,i+length(o));i=index($0,o)}printf "%s",$0}' "$fp" > "$fp.tmp" && mv "$fp.tmp" "$fp"
-          out="Edited $fp"
-        else out="Error: oldText not found in $fp"; rc=1; fi
+      local fp; fp=$(jp "$input" path); case "$fp" in -*) fp="./$fp";; esac
+      local old; old=$(jp "$input" oldText; printf x); old=${old%x}
+      local new; new=$(jp "$input" newText; printf x); new=${new%x}
+      _tool edit "$(_p "$fp")"
+      if [ -z "$old" ]; then out="Error: oldText must not be empty"; rc=1
+      elif [ -f "$fp" ]; then
+        local tmp mode; tmp=$(mktemp "$(dirname "$fp")/.pu.XXXXXX") || { out="Error creating temp file"; rc=1; }
+        mode=$(stat -f %Lp "$fp" 2>/dev/null || stat -c %a "$fp" 2>/dev/null || true); [ -n "$mode" ] && chmod "$mode" "$tmp" 2>/dev/null || true
+        OLD="$old" NEW="$new" awk 'BEGIN{RS="\0";ORS="";o=ENVIRON["OLD"];n=ENVIRON["NEW"]}{s=$0;c=0;while((i=index(s,o))>0){c++;s=substr(s,i+length(o))}if(c!=1)exit c?2:1;i=index($0,o);printf "%s%s%s",substr($0,1,i-1),n,substr($0,i+length(o))}' "$fp" > "$tmp" \
+          && { mv "$tmp" "$fp"; out="Edited $fp"; } \
+          || { rc=$?; rm -f "$tmp"; [ $rc -eq 2 ] && out="Error: oldText matched multiple times in $fp" || out="Error: oldText not found in $fp"; rc=1; }
       else out="Error: file not found: $fp"; rc=1; fi;;
     grep)
       local pat; pat=$(jp "$input" pattern)
       local gp; gp=$(jp "$input" path); [ -z "$gp" ] && gp="."
-      info "grep: $pat $gp"
-      out=$(grep -rn "$pat" "$gp" 2>&1 | head -100) || rc=$?;;
+      _tool grep "$pat $(_p "$gp")"
+      case "$gp" in -*) gp="./$gp";; esac
+      out=$(grep -rnE -- "$pat" "$gp" 2>&1); rc=$?; [ $rc -eq 1 ] && { out="No matches"; rc=0; }; out=$(printf '%s\n' "$out" | head -100);;
     find)
       local fp; fp=$(jp "$input" path); [ -z "$fp" ] && fp="."
       local fn; fn=$(jp "$input" name)
-      info "find: $fp $fn"
-      [ -n "$fn" ] && out=$(find "$fp" -name "$fn" 2>&1 | head -100) || out=$(find "$fp" -maxdepth 3 2>&1 | head -100);;
+      _tool find "$(_p "$fp") $fn"
+      case "$fp" in -*) fp="./$fp";; esac
+      if [ -n "$fn" ]; then out=$(find "$fp" -name "$fn" 2>&1 | head -100); else out=$(find "$fp" -maxdepth 3 2>&1 | head -100); fi;;
     ls)
       local lp; lp=$(jp "$input" path); [ -z "$lp" ] && lp="."
-      info "ls: $lp"; out=$(ls -la "$lp" 2>&1);;
+      _tool ls "$(_p "$lp")"; case "$lp" in -*) lp="./$lp";; esac; out=$(ls -la "$lp" 2>&1) || rc=$?;;
     *)
-      info "\$ $input"; out=$(sh -c "$input" 2>&1) && rc=0 || rc=$?;;
+      out="Error: unknown tool: $tool_name"; rc=1;;
   esac
-  M="${AGENT_TOOL_TRUNC:-2000}"; [ ${#out} -gt "$M" ] && out="$(printf '%s\n' "$out" | awk '{a[NR]=$0}END{if(NR<=40){for(i=1;i<=NR;i++)print a[i];exit}for(i=1;i<=30;i++)print a[i];printf "...[%d lines truncated]...\n",NR-40;for(i=NR-9;i<=NR;i++)print a[i]}')"
+  M="$AGENT_TOOL_TRUNC"; [ "$tool_name" != read ] && [ ${#out} -gt "$M" ] && out="$(printf '%s\n' "$out" | awk '{a[NR]=$0}END{if(NR<=40){for(i=1;i<=NR;i++)print a[i];exit}for(i=1;i<=30;i++)print a[i];printf "...[%d lines hidden; call read with offset/limit to view a specific range]...\n",NR-40;for(i=NR-9;i<=NR;i++)print a[i]}')"
   printf '%s' "$out";}
 MSGS=""
 save(){ [ -n "$HISTORY" ] && printf '%s' "$MSGS" > "$HISTORY" || true;}
 load(){ [ -n "$HISTORY" ] && [ -f "$HISTORY" ] && MSGS=$(cat "$HISTORY") && info "Resumed: $HISTORY" && return 0; return 1;}
 append(){ MSGS=$(printf '%s' "$MSGS" | sed 's/]$//')",$1]";}
 RA='"role":"assistant"' RU='"role":"user"' RT='"role":"tool"'
-TOKEN_IN=0 TOKEN_OUT=0
-track_tokens(){ [ "$COST" = 1 ] && { local u; u=$(jp "$1" usage); local a; a=$(jp "$u" input_tokens); local b; b=$(jp "$u" output_tokens); TOKEN_IN=$((TOKEN_IN+${a:-0})); TOKEN_OUT=$((TOKEN_OUT+${b:-0})); } || true;}
-trim_context(){ local m="$1" f="${2:-}" cap=$((CTX_LIMIT-${AGENT_RESERVE:-16000})) o n c h a r mid p req res s
+TOKEN_IN=0 TOKEN_OUT=0 COST_USD=0
+track_tokens(){ local u a b; u=$(jp "$1" usage)
+  case "$PROVIDER" in anthropic) a=$(jp "$u" input_tokens); b=$(jp "$u" output_tokens);; *) a=$(jp "$u" input_tokens); b=$(jp "$u" output_tokens); [ -z "$a" ] && a=$(jp "$u" prompt_tokens); [ -z "$b" ] && b=$(jp "$u" completion_tokens);; esac
+  TOKEN_IN=$((TOKEN_IN+${a:-0})); TOKEN_OUT=$((TOKEN_OUT+${b:-0}))
+  COST_USD=$(awk -v c="$COST_USD" -v a="${a:-0}" -v b="${b:-0}" -v pi="${AGENT_PRICE_IN_PER_MTOK:-0}" -v po="${AGENT_PRICE_OUT_PER_MTOK:-0}" 'BEGIN{printf "%.6f",c+(a*pi+b*po)/1000000}') ;}
+_fmtk(){ awk -v n="$1" 'BEGIN{if(n>=1000000)printf "%.1fM",n/1000000;else if(n>=1000)printf "%.0fk",n/1000;else printf "%d",n}';}
+_ctxp(){ awk -v n="${#MSGS}" -v c="$CTX_LIMIT" 'BEGIN{printf "%.1f%%/%dk",(c?100*n/c:0),c/1000}';}
+_branch(){ command -v git >/dev/null 2>&1 && git branch --show-current 2>/dev/null | awk 'NF{printf " (%s)",$0}';}
+_status(){ local d; case "$PWD" in "$HOME"/*) d="~/${PWD#"$HOME"/}";; *) d="$PWD";; esac; printf '%s%s ↑%s ↓%s' "$d" "$(_branch)" "$(_fmtk "$TOKEN_IN")" "$(_fmtk "$TOKEN_OUT")"; [ "$COST" = 1 ] && printf ' $%.3f' "$COST_USD"; printf ' %s (%s) %s' "$(_ctxp)" "$PROVIDER" "$MODEL"; [ "$EFFORT_OK" = 1 ] && printf ' • %s' "$EFFORT";}
+trim_context(){ local m="$1" f="${2:-}" cap=$((CTX_LIMIT-AGENT_RESERVE)) o n c h a r mid p req res s
   [ -z "$f" ] && [ ${#m} -le "$cap" ] && { printf '%s' "$m"; return; }
   info "Compacting (${#m}b > ${cap}b)${f:+ focus: $f}"
   o=$(printf '%s' "$m" | awk 'BEGIN{RS="\0"}{d=0;q=0;e=0;for(i=1;i<=length($0);i++){c=substr($0,i,1)
@@ -236,9 +267,7 @@ trim_context(){ local m="$1" f="${2:-}" cap=$((CTX_LIMIT-${AGENT_RESERVE:-16000}
   r=$(printf '%s\n' "$o" | sed -n "${c},${n}p" | tr '\n' ',' | sed 's/,$//')
   mid=$(printf '%s\n' "$o" | sed -n "2,$((c-1))p")
   [ -z "$mid" ] && { printf '%s' "$m"; return; }
-  p="${f:+Focus: $f. }Summarize this transcript in under 500 words, preserving files read, errors hit, code changes, decisions made. Do not call tools.
-
-$mid"
+  p="${f:+Focus: $f. }Summarize this transcript in under 500 words, preserving files read, errors hit, code changes, decisions made. Do not call tools.$mid"
   req='[{"role":"user","content":"'$(json_escape "$p")'"}]'
   res=$(call_api "$req"); parse_response "$res"
   [ -z "$TX" ] && { err "Summarization failed; passing through"; printf '%s' "$m"; return; }
@@ -252,53 +281,74 @@ $(cat "$dir/$f")" || true; done; dir=$(dirname "$dir"); done
 $ctx" || true
   [ -n "$ctx" ] && { info "Loaded context files"; SYSTEM="$SYSTEM
 $ctx"; } || true;}
-expand_refs(){ local t="$1"
-  case "$t" in *@*)
-    local fp; fp=$(printf '%s' "$t" | grep -o '@[^ ]*' | head -1 | sed 's/^@//' 2>/dev/null) || true
-    [ -n "$fp" ] && [ -f "$fp" ] && { local fc; fc=$(cat "$fp"); t=$(printf '%s' "$t" | sed "s|@$fp|[file: $fp]\n$fc|"); } || true;;
-  esac
-  printf '%s' "$t";}
-run_task(){ _STATE=busy; local task="$1"; task=$(expand_refs "$task")
-  case "$task" in '!'*) sh -c "$(printf '%s' "$task" | sed 's/^!//')" 2>&1; return;; esac
+expand_refs(){ local t="$1" pre post fp fc
+  case "$t" in *@*) ;; *) printf '%s' "$t"; return;; esac
+  pre="${t%%@*}"; post="${t#*@}"; fp="${post%% *}"; post="${post#"$fp"}"
+  if [ -n "$fp" ] && [ -f "$fp" ]; then fc=$(cat "$fp"; printf x); fc=${fc%x}; printf '%s[file: %s]\n%s%s' "$pre" "$fp" "$fc" "$post"
+  else printf '%s' "$t"; fi;}
+run_task(){ _STATE=busy; local task="$1"
+  case "$task" in '!'*) "$RUNSH" -c "${task#!}" 2>&1; return;; esac
+  task=$(expand_refs "$task")
   local task_esc; task_esc=$(json_escape "$task")
-  [ -n "$MSGS" ] && append "{\"role\":\"user\",\"content\":\"$task_esc\"}" || { load || MSGS="[{\"role\":\"user\",\"content\":\"$task_esc\"}]"; }
+  [ -z "$MSGS" ] && load || true
+  [ -n "$MSGS" ] && [ "$MSGS" != "" ] && append "{\"role\":\"user\",\"content\":\"$task_esc\"}" || MSGS="[{\"role\":\"user\",\"content\":\"$task_esc\"}]"
   log 0 start "$task"
-  local step=0
-  while [ "$step" -lt "$MAX_STEPS" ]; do step=$((step+1)); info "--- $step/$MAX_STEPS ---"
+  local step=0 empty_final=0 ctx_retry=0
+  while [ "$step" -lt "$MAX_STEPS" ]; do step=$((step+1))
     MSGS=$(trim_context "$MSGS")
     _STATE=busy
     local resp="" retry=0; while [ $retry -lt 3 ]; do
-      spin_start; resp=$(call_api "$MSGS") || true; spin_stop
+      local rf; rf=$(mktemp); spin_start "$(_status)"; call_api "$MSGS" >"$rf" 2>&1 & _CHILD=$!; wait "$_CHILD" || true; _CHILD=0; resp=$(cat "$rf"); rm -f "$rf"; spin_stop
       [ "$_STATE" = idle ] && { err "[interrupted]"; return 130; }
       [ -z "$resp" ] && { retry=$((retry+1)); err "Empty, retry $retry/3"; sleep $((retry*2)); continue; }
-      local api_err; api_err=$(jp "$resp" error)
-      [ -n "$api_err" ] && { err "API: $(jp "$api_err" message)"; retry=$((retry+1)); sleep $((retry*3)); continue; }
+      local api_err em; api_err=$(jp "$resp" error); em=$(jp "$api_err" message)
+      case "$(printf '%s' "$em" | tr A-Z a-z)" in *incorrect*api*key*|*invalid*api*key*|*unauthorized*|*authentication*) err "API: $em"; return 1;; *context*|*token*limit*|*too*large*) [ "$ctx_retry" = 0 ] && { ctx_retry=1; err "Context full; compacting and retrying"; MSGS=$(trim_context "$MSGS" "recover from context overflow"); continue; };; esac
+      [ -n "$api_err" ] && [ "$api_err" != "null" ] && [ "$api_err" != "" ] && { err "API: $em"; retry=$((retry+1)); sleep $((retry*3)); continue; }
       break; done
     [ -z "$resp" ] && { err "API failed"; log "$step" error "fail"; exit 1; }
+    local fatal; fatal=$(jp "$resp" error); [ -n "$fatal" ] && [ "$fatal" != null ] && { err "API failed: $(jp "$fatal" message)"; log "$step" error "api"; return 1; }
     track_tokens "$resp"
     parse_response "$resp"
     if [ "$TY" = "T" ] && [ -n "$TN" ]; then
-      [ -n "$TX" ] && info "$TX" || true; log "$step" tool_call "$TN: $(printf '%s' "$TINP" | head -c 200)"
-      spin_start; local tool_out; tool_out=$(run_tool "$TN" "$TINP"); spin_stop
-      [ "$_STATE" = idle ] && { err "[interrupted]"; return 130; }
-      log "$step" tool_result "$tool_out"
-      local tool_esc; tool_esc=$(json_escape "$tool_out")
-      local tr="{\"type\":\"tool_result\",\"tool_use_id\":\"${TI}\",\"content\":\"${tool_esc}\"}"
+      [ -n "$TX" ] && [ "$TX" != null ] && _say "$TX"
+      local trs="" trm="" trc="" _tu _tn _ti _tinp _tout _tesc _fn _src _mark
+      case "$PROVIDER" in anthropic) _src="$CB"; _mark='"type":"tool_use"';; openai) _src="$TC"; _mark='"function_call"';; esac
+      _src=$(printf '%s' "$_src" | tr -d '\n')
+      [ "$PROVIDER" = openai ] && trc=$(each_tool_use "$_src" '"reasoning"' | tr '\n' ',' | sed 's/,$//')
+      while IFS= read -r _tu; do
+        [ -z "$_tu" ] && continue
+        case "$PROVIDER" in
+          anthropic) _tn=$(jp "$_tu" name); _ti=$(jp "$_tu" id); _tinp=$(jp "$_tu" input);;
+          openai) _ti=$(jp "$_tu" call_id); [ -z "$_ti" ] && _ti=$(jp "$_tu" id); _tn=$(jp "$_tu" name); _tinp=$(jp "$_tu" arguments);;
+        esac
+        { [ -z "$_ti" ] || [ -z "$_tn" ]; } && { log "$step" error "Bad tool call: $_tu"; continue; }
+        [ "$PROVIDER" = openai ] && trc="${trc}${trc:+,}${_tu}"
+        log "$step" tool_call "$_tn: $(printf '%s' "$_tinp" | head -c 200)"
+        local of; of=$(mktemp); spin_start; run_tool "$_tn" "$_tinp" >"$of" & _CHILD=$!; wait "$_CHILD" || true; _CHILD=0; _tout=$(cat "$of"); rm -f "$of"; spin_stop
+        [ "$_STATE" = idle ] && { err "[interrupted]"; return 130; }
+        log "$step" tool_result "$_tout"; _tesc=$(json_escape "$_tout")
+        trs="${trs}${trs:+,}{\"type\":\"tool_result\",\"tool_use_id\":\"${_ti}\",\"content\":\"${_tesc}\"}"
+        [ "$PROVIDER" = openai ] && trm="${trm},{\"type\":\"function_call_output\",\"call_id\":\"${_ti}\",\"output\":\"${_tesc}\"}" || trm="${trm},{$RT,\"tool_call_id\":\"${_ti}\",\"content\":\"${_tesc}\"}"
+      done <<EOF
+$(each_tool_use "$_src" "$_mark")
+EOF
+      [ -z "$trs" ] && { err "No valid tool calls parsed"; dbg "$resp"; log "$step" error "No valid tool calls parsed"; return 1; }
       case "$PROVIDER" in
-        anthropic) [ -n "$CB" ] && append "{$RA,\"content\":${CB}},{$RU,\"content\":[$tr]}" || {
-          local inp_esc; inp_esc=$(json_escape "$TINP")
-          append "{$RA,\"content\":[{\"type\":\"text\",\"text\":\"\"},{\"type\":\"tool_use\",\"id\":\"${TI}\",\"name\":\"${TN}\",\"input\":${TINP:-{}}}]},{$RU,\"content\":[$tr]}"; };;
-        openai) local inp_esc; inp_esc=$(json_escape "$TINP")
-          append "{$RA,\"tool_calls\":[{\"id\":\"${TI}\",\"type\":\"function\",\"function\":{\"name\":\"${TN}\",\"arguments\":\"${inp_esc}\"}}]},{$RT,\"tool_call_id\":\"${TI}\",\"content\":\"${tool_esc}\"}";;
+        anthropic) [ -n "$CB" ] && append "{$RA,\"content\":${CB}},{$RU,\"content\":[$trs]}" || {
+          local _ti0; _ti0="$TINP"; [ -z "$_ti0" ] && _ti0="{}"
+          append "{$RA,\"content\":[{\"type\":\"text\",\"text\":\"\"},{\"type\":\"tool_use\",\"id\":\"${TI}\",\"name\":\"${TN}\",\"input\":${_ti0}}]},{$RU,\"content\":[$trs]}"
+        };;
+        openai) append "${trc}${trm}";;
       esac; save
     elif [ "$TY" = "X" ]; then
-      LAST_RESP="$TX"; [ "$PIPE" = 0 ] && info "Response:" || true; printf '%s\n' "$TX"
-      log "$step" response "$TX"
-      [ "$COST" = 1 ] && [ $TOKEN_IN -gt 0 ] && info "Tokens: $TOKEN_IN in + $TOKEN_OUT out" || true
-      info "Done ($step steps)"; save; return 0
+      if [ -z "$TX" ] || [ "$TX" = null ]; then [ "$empty_final" = 0 ] && { empty_final=1; [ "$PROVIDER:$EFFORT_OK" = openai:1 ] && EFFORT=low; append '{"role":"user","content":"Please summarize your findings and next steps."}'; continue; }; err "Empty final response"; return 1; fi
+      LAST_RESP="$TX"; [ "$PIPE" = 0 ] && [ "$INTERACTIVE" = 1 ] && _say "$TX" || printf '%s\n' "$TX"
+      log "$step" response "$TX"; append "{\"role\":\"assistant\",\"content\":\"$(json_escape "$TX")\"}"
+      info "done · $(_status)"
+      save; return 0
     else err "Parse failed"; dbg "$resp"; log "$step" error "Parse fail"; return 1; fi
   done; err "Max steps ($MAX_STEPS)"
-  [ "$COST" = 1 ] && [ $TOKEN_IN -gt 0 ] && info "Tokens: $TOKEN_IN in + $TOKEN_OUT out" || true
+  info "stopped · $(_status)"
   log "$step" max_steps "Limit"; return 1; }
 _tpl(){ for d in .pi/prompts "$HOME/.pi/agent/prompts"; do [ -f "$d/$1.md" ] && { cat "$d/$1.md"; return; }; done; echo "$1";}
 _skill(){ for d in .pi/skills .agents/skills "$HOME/.pi/agent/skills" "$HOME/.agents/skills"; do
@@ -316,10 +366,23 @@ _export(){ local out="${1:-session.md}"; printf '# Session Export\n\n' > "$out"
   done < "$LOG" >> "$out"; info "Exported to $out";}
 _fork(){ local nf="${LOG%.jsonl}_fork_$(date +%s).jsonl"
   [ -f "$LOG" ] && cp "$LOG" "$nf" && info "Forked to $nf" || err "Nothing to fork";}
+_sq(){ printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")";}
+_have_key(){ case "$PROVIDER" in anthropic) [ -n "${ANTHROPIC_API_KEY:-}" ];; openai) [ -n "${OPENAI_API_KEY:-}" ];; *) return 2;; esac;}
+_set_provider_model(){ PROVIDER="$1"; MODEL="$2"; EFFORT_OK=0; case "$PROVIDER:$MODEL" in openai:gpt-5.5*) [ -z "${AGENT_CONTEXT_LIMIT:-}" ] && CTX_LIMIT=400000; EFFORT_OK=1;; anthropic:claude-opus-4-7*) [ -z "${AGENT_CONTEXT_LIMIT:-}" ] && CTX_LIMIT=272000; EFFORT_OK=1;; anthropic:claude-opus-4-6*|anthropic:claude-sonnet-4-6*|anthropic:claude-opus-4-5*) EFFORT_OK=1;; esac; }
+_setup(){ local p k m e s u km dm os
+  printf '\nWelcome to pu.sh.\n\nProvider:\n  1) Anthropic (Claude)\n  2) OpenAI (GPT)\n> ' >&2; read -r p
+  case "$p" in 2|openai|OpenAI) PROVIDER=openai; km=OPENAI_API_KEY; u=https://platform.openai.com/api-keys; dm=gpt-5.5;; *) PROVIDER=anthropic; km=ANTHROPIC_API_KEY; u=https://console.anthropic.com/settings/keys; dm=claude-opus-4-7;; esac
+  command -v open >/dev/null 2>&1 && open "$u" 2>/dev/null || command -v xdg-open >/dev/null 2>&1 && xdg-open "$u" 2>/dev/null || true
+  printf 'Get a key at %s\nPaste API key (hidden): ' "$u" >&2; os=$(stty -g 2>/dev/null || true); stty -echo 2>/dev/null || true; read -r k; [ -n "$os" ] && stty "$os" 2>/dev/null || stty echo 2>/dev/null; printf '\n' >&2
+  k=$(_clean_key "$k")
+  [ -z "$k" ] && { err "No key entered"; exit 1; }; printf 'Model [%s]: ' "$dm" >&2; read -r m; [ -z "$m" ] && m=$dm; _set_provider_model "$PROVIDER" "$m"
+  printf 'Effort [medium] (OpenAI: none/minimal/low/medium/high/xhigh; Claude: low/medium/high/max, xhigh on Opus 4.7): ' >&2; read -r e; [ -z "$e" ] && e=medium; case "$e" in n) e=none;; min) e=minimal;; l) e=low;; m) e=medium;; h) e=high;; x|xh) e=xhigh;; esac; EFFORT=$e; export "$km=$k" AGENT_PROVIDER="$PROVIDER" AGENT_MODEL="$MODEL" AGENT_EFFORT="$EFFORT"
+  printf 'Save to ~/.pu.env so next time is automatic? [Y/n] ' >&2; read -r s; case "$s" in n|N|no|NO) info "Not saved (set in this session only)";; *) (umask 077; printf '%s=%s\nAGENT_PROVIDER=%s\nAGENT_MODEL=%s\nAGENT_EFFORT=%s\n' "$km" "$(_sq "$k")" "$(_sq "$PROVIDER")" "$(_sq "$MODEL")" "$(_sq "$EFFORT")" > "$HOME/.pu.env") && info "Saved ~/.pu.env";; esac;}
 handle_cmd(){ case "$1" in
   /model|/model\ *) local nm; nm=$(printf '%s' "$1" | sed 's|^/model *||')
-    [ -n "$nm" ] && { MODEL="$nm"; info "Model: $MODEL"; } || info "Current: $MODEL"; return 0;;
+    [ -n "$nm" ] && { case "$nm" in gpt-*|o1*|o3*|o4*) _set_provider_model openai "$nm";; claude-*) _set_provider_model anthropic "$nm";; *) MODEL="$nm";; esac; info "Model: $MODEL ($PROVIDER)"; } || info "Current: $MODEL ($PROVIDER)"; return 0;;
   /copy) _copy; return 0;; /fork) _fork; return 0;; /quit|/exit) exit 0;;
+  /login) _setup; return 0;; /logout) [ -f "$HOME/.pu.env" ] && rm "$HOME/.pu.env" && info "Removed ~/.pu.env" || info "No ~/.pu.env to remove"; unset ANTHROPIC_API_KEY OPENAI_API_KEY; info "Logged out. /login or set env vars to continue."; return 0;;
   /compact|/compact\ *) MSGS=$(trim_context "$MSGS" "$(printf '%s' "$1" | sed 's|^/compact *||')"); save; info "Compacted (${#MSGS}b)"; return 0;;
   /export|/export\ *) _export "$(printf '%s' "$1" | sed 's|^/export *||')"; return 0;;
   /skill:*) _skill "$(printf '%s' "$1" | sed 's|^/skill:||')"; return 0;;
@@ -328,18 +391,11 @@ handle_cmd(){ case "$1" in
     [ "$tp" != "$cn" ] && { info "Template: $cn"; run_task "$tp"; return 0; }
     err "Unknown command: $1"; return 0;;
   esac; return 1;}
-TASK=""; [ $# -gt 0 ] && TASK="$*" || { [ ! -t 0 ] && TASK=$(cat); }
+TASK=""; if [ "$PIPE" = 1 ] && [ ! -t 0 ]; then IN=$(cat); [ $# -gt 0 ] && TASK=$([ -n "$IN" ] && printf '%s\n%s' "$IN" "$*" || printf '%s' "$*") || TASK="$IN"; else [ $# -gt 0 ] && TASK="$*" || { [ ! -t 0 ] && TASK=$(cat); }; fi
 [ -z "$TASK" ] && [ -t 0 ] && [ "$INTERACTIVE" != -1 ] && INTERACTIVE=1
 [ -z "$TASK" ] && [ "$INTERACTIVE" != 1 ] && { err "No task. Usage: ./pu.sh \"task\" or ./pu.sh -i"; exit 1; }
-case "$PROVIDER" in anthropic) [ -n "${ANTHROPIC_API_KEY:-}" ] || { err "Set ANTHROPIC_API_KEY"; exit 1; };;
-  openai) [ -n "${OPENAI_API_KEY:-}" ] || { err "Set OPENAI_API_KEY"; exit 1; };; *) err "Bad provider"; exit 1;; esac
+_have_key || { [ -t 0 ] && _setup || { err "No API key. Set ANTHROPIC_API_KEY or OPENAI_API_KEY (https://console.anthropic.com/settings/keys | https://platform.openai.com/api-keys)"; exit 1; }; }
 load_context
-[ -n "$TASK" ] && TASK=$(expand_refs "$TASK") || true
-[ -n "$TASK" ] && { info "$TASK"; info "$MODEL ($PROVIDER) $MAX_STEPS steps"; run_task "$TASK"; exit $?; } || true
-info "$MODEL ($PROVIDER) | /model /copy /compact /export /skill:name /quit | !cmd | @file"
-while true; do
-  _STATE=idle; printf '\033[36m> \033[0m' >&2; read -r INPUT || break
-  case "$INPUT" in quit|exit|q) break;; ''|' ') continue;; esac
-  handle_cmd "$INPUT" && continue || true
-  run_task "$INPUT"
-done
+[ -n "$TASK" ] && { info "$TASK"; info "$MODEL ($PROVIDER) $MAX_STEPS steps"; run_task "$TASK"; rc=$?; [ "$INTERACTIVE" = 1 ] || exit "$rc"; } || true
+info "$MODEL ($PROVIDER) | /model /login /logout /copy /compact /export /skill:name /quit | !cmd | @file"
+while true; do _STATE=idle; printf '\033[36m> \033[0m' >&2; read -r INPUT || break; case "$INPUT" in quit|exit|q) break;; ''|' ') continue;; esac; handle_cmd "$INPUT" && continue || true; run_task "$INPUT"; done
