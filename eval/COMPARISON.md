@@ -2,119 +2,150 @@
 
 ## The reality
 
-pu.sh is a **toy proof-of-concept** for extreme portability. Pi is a **production coding harness**. They are not in the same category. Comparing them feature-for-feature makes this obvious.
+`pu.sh` is a tiny, inspectable coding-agent harness optimized for extreme portability. Pi is a production-grade coding agent with a real runtime, TUI, extension system, model registry, and provider ecosystem.
 
-## What Pi does that pu.sh can't
+They are not in the same category. That is the point.
 
-### Core Agent Capabilities
+## Current snapshot
+
+| Dimension | Pi | pu.sh |
+|---|---|---|
+| Runtime | Node/TypeScript app | One `#!/bin/sh` file |
+| Size on this machine | ~281 MB with Node/package footprint | 32 KB / 400 LOC |
+| Providers | 20+ | 2: Anthropic + OpenAI |
+| Auth | API keys + richer provider flows | API keys + optional `~/.pu.env` |
+| UI | Full TUI | plain REPL / pipe mode |
+| Tools | Extensible typed tools | 7 built-ins |
+| Streaming | yes | no |
+| Extensions | TypeScript packages/events/TUI APIs | no runtime plugin SDK |
+| Best use | daily driver / production harness | minimal machines, CI, demos, understanding agents |
+
+## Core agent capabilities
+
 | Capability | Pi | pu.sh |
 |---|---|---|
-| **Multiple tools** (read, write, edit, bash, grep, find, ls) | ✅ 7 built-in | ❌ 1 (sh -c) |
-| **Surgical file editing** (exact text replacement, not rewrite) | ✅ edit tool | ❌ |
-| **File reading** (with offset/limit, images, truncation) | ✅ native | ❌ via sh |
-| **Multi-shot / follow-up messages** (steer mid-turn) | ✅ message queue | ❌ |
-| **Streaming responses** (token-by-token display) | ✅ SSE/WebSocket | ❌ waits for full response |
-| **Thinking/reasoning levels** (off → xhigh) | ✅ 6 levels | ❌ |
-| **Image input** (paste, drag, file reference) | ✅ | ❌ |
-| **File references** (@file in prompt) | ✅ fuzzy search | ❌ |
+| `bash` tool | ✅ | ✅ |
+| `read` tool | ✅ offset/limit + richer media support | ✅ text, offset/limit, large-file guard |
+| `write` tool | ✅ | ✅ preserves trailing newlines |
+| `edit` tool | ✅ robust exact replacement | ✅ exact replacement, rejects non-unique matches, preserves mode |
+| `grep` tool | ✅ | ✅ recursive grep with common noisy-dir exclusions |
+| `find` tool | ✅ | ✅ find/glob with common noisy-dir pruning |
+| `ls` tool | ✅ | ✅ |
+| Tool-call loop | ✅ | ✅ Anthropic + OpenAI Responses |
+| OpenAI Responses tools | ✅ provider implementation | ✅ function tools + `function_call_output` |
+| OpenAI reasoning continuation | ✅ | ✅ carries `reasoning` items forward |
+| Multi-turn chat | ✅ | ✅ REPL/history in memory |
+| Pipe/print mode | ✅ | ✅ `--pipe` / `-n` |
+| Streaming tokens/events | ✅ | ❌ waits for curl response |
+| Image input | ✅ | ❌ |
+| Follow-up/steering mid-turn | ✅ | ❌ no async stdin |
 
-### Session Management
+## Session and context
+
 | Capability | Pi | pu.sh |
 |---|---|---|
-| **Session branching** (tree structure, revisit any point) | ✅ /tree | ❌ |
-| **Smart compaction** (LLM summarizes old context) | ✅ auto + manual | ❌ dumb truncation |
-| **Session resume** (browse, select, continue) | ✅ -c, -r, --session | ⚠️ single checkpoint file |
-| **Session forking** (branch from any point) | ✅ /fork | ❌ |
-| **Session export** (HTML, gist sharing) | ✅ /export, /share | ❌ |
-| **Session versioning** (tree with id/parentId) | ✅ v3 JSONL tree | ❌ flat array |
+| Context files (`AGENTS.md`, etc.) | ✅ | ✅ `AGENTS.md` / `CLAUDE.md`, plus global Pi agent context if present |
+| Context status | ✅ token-aware | ⚠️ byte/char approximation shown in status |
+| Auto-compaction | ✅ robust turn-aware compaction | ⚠️ LLM summary with heuristic transcript slicing |
+| Manual compaction | ✅ | ✅ `/compact [focus]` |
+| Session resume | ✅ session browser / IDs | ⚠️ `AGENT_HISTORY=file.json` only |
+| Session tree | ✅ | ❌ |
+| Session fork | ✅ | ⚠️ copies JSONL log with `/fork` |
+| Export/share | ✅ rich export/share | ⚠️ markdown export from JSONL log |
+| Provider-compatible history metadata | ✅ | ❌ user must avoid mixing incompatible histories |
 
-### Extensibility
+## Commands and workflow
+
 | Capability | Pi | pu.sh |
 |---|---|---|
-| **Custom tools** (register new LLM-callable tools) | ✅ TypeScript | ❌ |
-| **Event system** (intercept/modify any lifecycle event) | ✅ 20+ events | ❌ |
-| **Plugin packages** (install from npm/git) | ✅ pi install | ❌ |
-| **Skills** (on-demand capability packages) | ✅ /skill:name | ❌ |
-| **Prompt templates** (reusable prompts with vars) | ✅ /template | ❌ |
-| **Custom UI** (TUI components, overlays, widgets) | ✅ full TUI API | ❌ |
-| **Themes** (visual customization) | ✅ hot-reload | ❌ |
-| **Custom commands** (/mycommand) | ✅ | ❌ |
-| **Keyboard shortcuts** (customizable) | ✅ | ❌ |
-| **Permission gates** (confirm dangerous ops) | ✅ extensible | ⚠️ basic AGENT_CONFIRM |
+| `/model` | ✅ rich model selector | ⚠️ simple model switch/guess provider |
+| `/effort` | ✅ | ✅ simple effort switch |
+| `/login` / `/logout` | ✅ provider auth flows | ✅ API-key wizard, no OAuth |
+| `/copy` | ✅ | ✅ via `pbcopy`/`xclip` |
+| `/skill:name` | ✅ | ✅ loads `SKILL.md` text into prompt |
+| Prompt templates | ✅ | ✅ `/name` from `.pi/prompts` or user prompt dir |
+| `@file` references | ✅ fuzzy/path UX | ⚠️ simple single `@path` expansion |
+| Inline shell `!cmd` | ✅ | ✅ |
+| Keyboard shortcuts | ✅ | ❌ |
+| Path completion | ✅ | ❌ |
+| TUI editor/history | ✅ | ❌ plain `read -r` |
+| Themes | ✅ | ❌ terminal theme only |
 
-### Provider Support
+## Provider/model support
+
 | Capability | Pi | pu.sh |
 |---|---|---|
-| **Providers** | 20+ (Anthropic, OpenAI, Google, Azure, Bedrock, Mistral, Groq, xAI, etc.) | 2 (Anthropic, OpenAI) |
-| **Auth methods** | API key + OAuth subscription | API key only |
-| **Model switching** (mid-session) | ✅ /model, Ctrl+L | ❌ |
-| **Model cycling** (Ctrl+P rotate) | ✅ | ❌ |
-| **Custom providers** (models.json) | ✅ | ❌ |
+| Anthropic | ✅ | ✅ Messages API |
+| OpenAI | ✅ | ✅ Responses API |
+| Google/Gemini | ✅ | ❌ |
+| Azure/OpenAI-compatible variants | ✅ | ❌ |
+| Bedrock/Vertex/etc. | ✅ | ❌ |
+| Custom provider definitions | ✅ | ❌ |
+| Model registry/context/prices | ✅ | ⚠️ tiny hard-coded metadata + optional price env vars |
+| Reasoning effort | ✅ model-aware | ⚠️ gated for known model prefixes; unsupported models omit effort fields |
+| OAuth/subscription auth | ✅ where supported | ❌ API keys only |
 
-### Developer Experience
+## Extensibility and safety
+
 | Capability | Pi | pu.sh |
 |---|---|---|
-| **Interactive TUI** (editor, message display) | ✅ full terminal UI | ❌ one-shot only |
-| **Context files** (AGENTS.md, CLAUDE.md) | ✅ auto-loaded | ❌ |
-| **Path completion** (tab complete) | ✅ | ❌ |
-| **Undo/redo** (editor) | ✅ | ❌ |
-| **Message history** (up arrow) | ✅ | ❌ |
-| **Inline bash** (!command, !!command) | ✅ | ❌ |
-| **Clipboard** (copy last response) | ✅ /copy | ❌ |
+| Custom tools | ✅ TypeScript API | ❌ edit the script |
+| Event system/hooks | ✅ | ❌ |
+| Extension packages | ✅ | ❌ |
+| Custom TUI components | ✅ | ❌ |
+| Permission system | ✅ richer | ⚠️ `AGENT_CONFIRM=1` prompt before tools |
+| Tool schemas | ✅ typed | ⚠️ hand-written JSON schemas |
+| Structured tool errors | ✅ stronger provider abstractions | ⚠️ error text returned to model |
+| File metadata preservation | ✅ better abstractions | ⚠️ edit preserves mode, not owner/ACL/xattrs/symlink semantics |
+| JSON parsing | ✅ real parser/runtime | ⚠️ targeted `awk` parser; fragile by design |
 
-### Programmatic Use
-| Capability | Pi | pu.sh |
-|---|---|---|
-| **SDK** (embed in apps) | ✅ TypeScript SDK | ❌ |
-| **RPC mode** (stdin/stdout JSONL) | ✅ --mode rpc | ❌ |
-| **JSON output mode** | ✅ --mode json | ❌ |
-| **Print mode** (non-interactive) | ✅ -p | ⚠️ only mode it has |
+## Platform reach
 
-## What pu.sh does differently
-
-| Capability | pu.sh | Pi |
-|---|---|---|
-| **Zero-install deploy** (curl \| sh) | ✅ | ❌ needs npm |
-| **Runs without Node.js** | ✅ sh only | ❌ requires Node 23+ |
-| **19KB total footprint** | ✅ | ❌ 281 MB measured (172 MB pkg + 108 MB Node) |
-| **Runs in minimal containers** (alpine, busybox) | ✅ | ❌ |
-| **Pipe composition** (agent \| agent) | ✅ --pipe | ⚠️ -p (no chaining) |
-| **Zero config files** | ✅ env vars only | ❌ settings.json, sessions/ |
-
-**But Pi runs in more places overall:**
-
-| Platform | pu.sh | Pi |
+| Platform | Pi | pu.sh |
 |---|---|---|
 | macOS | ✅ | ✅ |
 | Linux | ✅ | ✅ |
-| Windows | ❌ no native sh | ✅ |
-| Android (Termux) | ⚠️ maybe | ✅ documented |
+| Windows native | ✅ | ❌ needs sh/WSL/MSYS/etc. |
 | WSL | ✅ | ✅ |
-| Minimal containers (alpine) | ✅ | ❌ needs node |
-| CI runners | ✅ native | ⚠️ needs node step |
+| Android/Termux | ✅ documented | ⚠️ likely if common tools/curl/awk exist |
+| Minimal containers | ⚠️ needs Node | ✅ strong fit |
+| CI runners | ✅ setup Node | ✅ copy one file |
 
-## Scoring
+## Feature coverage estimate
 
-### Feature coverage (honest count)
+The old comparison claimed `pu.sh` only had one tool and no interactive mode. That is outdated.
 
-**Total unique capabilities identified: 45**
+A current rough count across the same broad areas:
 
-- **Pi:** 42/45 full, 2/45 partial, 1/45 missing = **95%**
-- **pu.sh:** 10/45 full, 4/45 partial, 31/45 missing = **31%**
+- **Pi:** ~95%+ of production-agent features in this comparison.
+- **pu.sh:** ~55–65% of the practical agent loop/workflow features, but far less of the TUI/provider/extensibility surface.
 
-### The tradeoff in one line
+`pu.sh` now covers the core loop surprisingly well:
 
-> Pi is **~15,000× larger on disk** (measured: 281 MB vs 19 KB) with more features. pu.sh is 310 lines of shell with zero dependencies beyond `sh` + `curl` — including a hand-rolled JSON parser in awk.
+```text
+prompt → provider API → tool call → shell tool → tool result → repeat → final answer
+```
 
-### Where pu.sh is genuinely useful
+But Pi remains far ahead on everything that benefits from a real runtime: streaming, TUI, extensions, provider breadth, model registry, session trees, safety policies, and structured parsing.
 
-1. **Minimal containers** — agent capability in alpine/scratch images where Node.js isn't available
-2. **CI/CD** — add an agent step without a node setup action
-3. **Bootstrapping** — use pu.sh to install Pi (or anything else)
-4. **Understanding** — the entire agent loop is readable in one screen
+## The tradeoff in one line
 
-### Where Pi wins on platform reach
+> Pi is the real coding agent. `pu.sh` is the smallest useful fossil of one: 400 lines, 32 KB, `sh` + `curl` + `awk`, and no build step.
 
-1. **Windows** — pu.sh has no native sh; Pi runs natively
-2. **Android (Termux)** — Pi has documented Termux support
-3. **Desktop use** — Pi's TUI is a real interactive experience; pu.sh is one-shot only
+## Where pu.sh is genuinely useful
+
+1. **Minimal containers** — agent capability where Node.js is not installed.
+2. **CI/CD** — add an agent step without a setup action.
+3. **Bootstrapping** — use `pu.sh` to install/debug other tools.
+4. **Auditing/learning** — read the whole agent loop in one file.
+5. **Emergency shells** — copy one file, set an API key, get tools.
+
+## Where Pi wins hard
+
+1. **Daily development** — TUI, streaming, history, shortcuts, completion.
+2. **Provider/model breadth** — real registry and many backends.
+3. **Extensibility** — TypeScript plugins, events, tools, UI.
+4. **Safety and correctness** — structured runtime beats shell parsing.
+5. **Long sessions** — session trees, compaction, recovery, metadata.
+
+Different tools. Different problems. Same basic agent shape.

@@ -164,49 +164,53 @@ PTU=$(each_tool_use "$PFLAT" '"function_call"')
 [ "$(jp "$PTU" call_id)/$(jp "$PTU" name)" = "call_pretty/read" ] \
   && pass "PR-11" "openai: pretty function_calls survive line compaction" \
   || fail "PR-11" "openai pretty function_calls" "got: $PTU"
+parse_response '{"output_text":"direct final","usage":{"input_tokens":1,"output_tokens":1}}'
+[ "$TY/$TX" = "X/direct final" ] \
+  && pass "PR-12" "openai: top-level output_text string parsed" \
+  || fail "PR-12" "openai top-level output_text" "TY=$TY TX=$TX"
 OMSGS='[{"role":"user","content":"go"}]'
 OTR=',{"type":"function_call_output","call_id":"call_abc","output":"ok"}'
 ONEW=$(printf '%s' "$OMSGS" | sed 's/]$//')",${ORG},${OTU}${OTR}]"
 valid_json "$ONEW" \
   && [ "$(json_field "$ONEW" 'sys.stdout.write(d[1]["type"]+":"+d[3]["call_id"])')" = "reasoning:call_abc" ] \
-  && pass "PR-12" "openai: appended reasoning/function_call/function_call_output are schema-shaped" \
-  || fail "PR-12" "openai append invalid" "got: $ONEW"
+  && pass "PR-13" "openai: appended reasoning/function_call/function_call_output are schema-shaped" \
+  || fail "PR-13" "openai append invalid" "got: $ONEW"
 
 # OpenAI Responses uses max_output_tokens and supports reasoning.effort with tools.
 curl(){ while [ $# -gt 0 ]; do [ "$1" = -d ] && { shift; printf '%s' "$1"; return; }; shift; done; }
 PROVIDER=openai; MODEL=gpt-5.5; MAX_TOKENS=123; THINKING=; EFFORT=medium; EFFORT_OK=1
 REQ=$(call_api '[{"role":"user","content":"hi"}]')
 json_field "$REQ" 'assert "max_output_tokens" in d and "max_tokens" not in d and "max_completion_tokens" not in d' \
-  && pass "PR-13" "openai responses: request uses max_output_tokens" \
-  || fail "PR-13" "openai token parameter" "request: $REQ"
+  && pass "PR-14" "openai responses: request uses max_output_tokens" \
+  || fail "PR-14" "openai token parameter" "request: $REQ"
 json_field "$REQ" 'assert d["reasoning"]["effort"] == "medium" and "instructions" in d and d["tools"][0]["type"] == "function"' \
-  && pass "PR-14" "openai responses: sends reasoning.effort with tools" \
-  || fail "PR-14" "openai responses reasoning/tools" "request: $REQ"
+  && pass "PR-15" "openai responses: sends reasoning.effort with tools" \
+  || fail "PR-15" "openai responses reasoning/tools" "request: $REQ"
 PROVIDER=openai; MODEL=gpt-4o; MAX_TOKENS=123; THINKING=; EFFORT=high; EFFORT_OK=0
 REQ=$(call_api '[{"role":"user","content":"hi"}]')
 json_field "$REQ" 'assert "reasoning" not in d and d["max_output_tokens"] == 123' \
-  && pass "PR-15" "openai non-reasoning model: no effort/no token boost" \
-  || fail "PR-15" "openai unsupported reasoning gated" "request: $REQ"
+  && pass "PR-16" "openai non-reasoning model: no effort/no token boost" \
+  || fail "PR-16" "openai unsupported reasoning gated" "request: $REQ"
 PROVIDER=openai; MODEL=gpt-5.5; MAX_TOKENS=123; THINKING=; EFFORT=none; EFFORT_OK=1
 REQ=$(call_api '[{"role":"user","content":"hi"}]')
 json_field "$REQ" 'assert "reasoning" not in d' \
-  && pass "PR-16" "openai effort=none suppresses reasoning field" \
-  || fail "PR-16" "openai none reasoning" "request: $REQ"
+  && pass "PR-17" "openai effort=none suppresses reasoning field" \
+  || fail "PR-17" "openai none reasoning" "request: $REQ"
 PROVIDER=openai; MODEL=gpt-5.5; MAX_TOKENS=123; THINKING=; EFFORT=xhigh; EFFORT_OK=1
 REQ=$(call_api '[{"role":"user","content":"hi"}]')
 json_field "$REQ" 'assert d["max_output_tokens"] == 32000' \
-  && pass "PR-17" "openai xhigh gets larger output budget" \
-  || fail "PR-17" "openai xhigh budget" "request: $REQ"
+  && pass "PR-18" "openai xhigh gets larger output budget" \
+  || fail "PR-18" "openai xhigh budget" "request: $REQ"
 PROVIDER=anthropic; MODEL=claude-opus-4-7; EFFORT=xhigh; THINKING=; EFFORT_OK=1
 REQ=$(call_api '[{"role":"user","content":"hi"}]')
 json_field "$REQ" 'assert d["effort"] == "xhigh" and d["thinking"]["type"] == "adaptive" and "budget_tokens" not in d["thinking"]' \
-  && pass "PR-18" "anthropic: Opus 4.7 uses effort + adaptive thinking, not budget_tokens" \
-  || fail "PR-18" "anthropic effort/adaptive" "request: $REQ"
+  && pass "PR-19" "anthropic: Opus 4.7 uses effort + adaptive thinking, not budget_tokens" \
+  || fail "PR-19" "anthropic effort/adaptive" "request: $REQ"
 unset -f curl
 PROVIDER=anthropic
 
 mkdir -p "$TMPD/home" "$TMPD/bin"
-printf "OPENAI_API_KEY='saved-key'\nAGENT_PROVIDER='openai'\n" > "$TMPD/home/.pu.env"
+printf "OPENAI_API_KEY='saved-key'\nAGENT_PROVIDER='openai'\necho pwn > '$TMPD/pwn'\n" > "$TMPD/home/.pu.env"
 cat > "$TMPD/bin/curl" <<'EOF'
 #!/bin/sh
 case " $* " in *"Authorization: Bearer saved-key"*) ;; *) printf '%s' '{"error":{"message":"missing saved key"}}'; exit 0;; esac
@@ -214,20 +218,20 @@ printf '%s' '{"output":[{"type":"message","content":[{"type":"output_text","text
 EOF
 chmod +x "$TMPD/bin/curl"
 OUT=$(HOME="$TMPD/home" PATH="$TMPD/bin:$PATH" AGENT_MODEL=gpt-5.5 "$AGENT" -n hi 2>/dev/null); RC=$?
-[ "$OUT" = ok ] && [ $RC -eq 0 ] \
-  && pass "PR-19" "~/.pu.env key loads with AGENT_MODEL and exits 0" \
-  || fail "PR-19" "saved key/noninteractive exit" "rc=$RC out=$OUT"
+[ "$OUT" = ok ] && [ $RC -eq 0 ] && [ ! -e "$TMPD/pwn" ] \
+  && pass "PR-20" "~/.pu.env safe parser loads key without executing shell" \
+  || fail "PR-20" "saved key/env parser" "rc=$RC out=$OUT pwn=$([ -e "$TMPD/pwn" ] && echo yes || echo no)"
 
 mkdir -p "$TMPD/emptyhome"; HOME="$TMPD/emptyhome"
-printf '2\n  OPENAI_API_KEY="saved-key" \n\nnone\nY\n' | _setup 2>/dev/null
+printf '2\n export OPENAI_API_KEY="saved-key" \n\nnone\nY\n' | _setup 2>/dev/null
 . "$TMPD/emptyhome/.pu.env"
-[ "$OPENAI_API_KEY" = saved-key ] \
-  && pass "PR-20" "login strips env-prefix/quotes/whitespace from pasted key" \
-  || fail "PR-20" "key paste sanitization" "key=$OPENAI_API_KEY"
+[ "$OPENAI_API_KEY" = saved-key ] && [ "$(_clean_key ' OPENAI_API_KEY="saved-key" ')" = saved-key ] \
+  && pass "PR-21" "login strips env/export-prefix/quotes/whitespace from pasted key" \
+  || fail "PR-21" "key paste sanitization" "key=$OPENAI_API_KEY direct=$(_clean_key ' OPENAI_API_KEY="saved-key" ')"
 HIST="$TMPD/hist.json"; HOME="$TMPD/home" PATH="$TMPD/bin:$PATH" AGENT_MODEL=gpt-5.5 AGENT_HISTORY="$HIST" "$AGENT" -n hi >/dev/null 2>/dev/null
 json_field "$(cat "$HIST")" 'assert d[-1]["role"] == "assistant" and d[-1]["content"] == "ok"' \
-  && pass "PR-21" "final assistant response is saved to history" \
-  || fail "PR-21" "assistant response missing from history" "hist=$(cat "$HIST")"
+  && pass "PR-22" "final assistant response is saved to history" \
+  || fail "PR-22" "assistant response missing from history" "hist=$(cat "$HIST")"
 
 # ── trim_context end-to-end (mocked call_api) ──────────────────────
 echo
@@ -297,25 +301,45 @@ OUT=$(trim_context "$SHORT_BUT_OK" "key files only")
 [ "$OUT" != "$SHORT_BUT_OK" ] && valid_json "$OUT" \
   && pass "TC-7" "focus arg forces compaction (threshold bypass)" \
   || fail "TC-7" "focus didn't force"
+OPENAI_BOUNDARY='[{"role":"user","content":"task"},{"role":"user","content":"old"},{"type":"reasoning","id":"rs_1","summary":[]},{"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"ok"},{"role":"user","content":"next"},{"role":"assistant","content":"done"}]'
+OUT=$(trim_context "$OPENAI_BOUNDARY" "force")
+json_field "$OUT" 'assert d[2]["type"] == "reasoning" and d[3]["type"] == "function_call"' \
+  && pass "TC-8" "trim_context keeps OpenAI reasoning before function_call" \
+  || fail "TC-8" "openai reasoning/function_call boundary" "out=$OUT"
 
 # Edge case: API returns empty TX → fallback to original
 call_api(){ printf '%s' '{"error":{"message":"rate limit"}}'; }
 OUT=$(trim_context "$MSGS_BIG" 2>/dev/null)
 [ "$OUT" = "$MSGS_BIG" ] \
-  && pass "TC-8" "API failure → safe fallback to original MSGS" \
-  || fail "TC-8" "fallback didn't fire"
+  && pass "TC-9" "API failure → safe fallback to original MSGS" \
+  || fail "TC-9" "fallback didn't fire"
 
 sleep(){ :; }
 MSGS=; LOG="$TMPD/run_task.jsonl"; MAX_STEPS=1; PIPE=1; PROVIDER=openai; MODEL=gpt-5.5; EFFORT_OK=1
 ERR=$(run_task "hi" 2>&1 >/dev/null); RC=$?
 [ $RC -ne 0 ] && printf '%s' "$ERR" | grep -q 'API failed' && ! printf '%s' "$ERR" | grep -q 'Empty final' \
-  && pass "TC-9" "run_task: API errors fail as API errors, not empty final" \
-  || fail "TC-9" "API error misreported" "rc=$RC err=$ERR"
+  && pass "TC-10" "run_task: API errors fail as API errors, not empty final" \
+  || fail "TC-10" "API error misreported" "rc=$RC err=$ERR"
 CNT="$TMPD/auth_count"; : > "$CNT"; call_api(){ echo x >> "$CNT"; printf '%s' '{"error":{"message":"Incorrect API key provided"}}'; }
 ERR=$(run_task "hi" 2>&1 >/dev/null); RC=$?; CNT_N=$(wc -l < "$CNT" | tr -d ' ')
 [ $RC -ne 0 ] && [ "$CNT_N" = 1 ] && printf '%s' "$ERR" | grep -q 'Incorrect API key' \
-  && pass "TC-10" "run_task: auth errors are not retried" \
-  || fail "TC-10" "auth error retry behavior" "rc=$RC calls=$CNT_N err=$ERR"
+  && pass "TC-11" "run_task: auth errors are not retried" \
+  || fail "TC-11" "auth error retry behavior" "rc=$RC calls=$CNT_N err=$ERR"
+CNT="$TMPD/transport_count"; : > "$CNT"; call_api(){ echo x >> "$CNT"; printf 'curl: (6) Could not resolve host\n'; return 6; }
+ERR=$(run_task "hi" 2>&1 >/dev/null); RC=$?; CNT_N=$(wc -l < "$CNT" | tr -d ' ')
+[ $RC -ne 0 ] && [ "$CNT_N" = 3 ] && printf '%s' "$ERR" | grep -q 'API transport' && ! printf '%s' "$ERR" | grep -q 'Empty final\|Max steps' \
+  && pass "TC-12" "run_task: curl transport failures retry then report transport" \
+  || fail "TC-12" "transport error masked" "rc=$RC calls=$CNT_N err=$ERR"
+MSGS=; AGENT_DEBUG_API="$TMPD/dbg"; call_api(){ printf '%s' '{"output_text":"ok","usage":{"input_tokens":1,"output_tokens":1}}'; }
+run_task "hi" >/dev/null 2>/dev/null; unset AGENT_DEBUG_API
+[ -s "$TMPD/dbg/input-1-0.json" ] && [ -s "$TMPD/dbg/resp-1-0.json" ] \
+  && pass "TC-13" "run_task: AGENT_DEBUG_API captures input/response" \
+  || fail "TC-13" "debug capture missing"
+MSGS=; MAX_STEPS=1; call_api(){ printf '%s' '{"error":{"message":"model not found"}}'; }
+ERR=$(run_task "hi" 2>&1 >/dev/null); RC=$?
+[ $RC -ne 0 ] && printf '%s' "$ERR" | grep -q 'Try /model' \
+  && pass "TC-14" "run_task: model errors suggest /model" \
+  || fail "TC-14" "model hint missing" "err=$ERR"
 
 # ── Tool truncation: line-aware + UTF-8 safe ───────────────────────
 echo
@@ -417,6 +441,15 @@ run_tool write "{\"path\":\"$F\",\"content\":\"a\\n\"}" >/dev/null
 printf 'a\nb\nc' > "$F"; run_tool edit "{\"path\":\"$F\",\"oldText\":\"b\\nc\",\"newText\":\"B\\nC\\n\"}" >/dev/null
 [ "$(tail -c 1 "$F" | od -An -tx1 | tr -d ' ')" = 0a ] && pass "ED-10" "edit preserves trailing newline in newText" || fail "ED-10" "edit newline stripped" "od=$(od -An -tx1 "$F")"
 ERRF="$TMPD/spin.err"; spin_stop 2>"$ERRF"; [ ! -s "$ERRF" ] && pass "ED-11" "spin_stop is quiet on non-tty stderr" || fail "ED-11" "spinner leaked escapes" "bytes=$(wc -c < "$ERRF")"
+mkdir -p "$TMPD/search/node_modules" "$TMPD/search/src"; printf match > "$TMPD/search/node_modules/a.txt"; printf match > "$TMPD/search/src/a.txt"
+OUT=$(run_tool grep "{\"path\":\"$TMPD/search\",\"pattern\":\"match\"}")
+printf '%s' "$OUT" | grep -q 'src/a.txt' && ! printf '%s' "$OUT" | grep -q node_modules \
+  && pass "ED-12" "grep excludes noisy directories" || fail "ED-12" "grep exclusions" "got=$OUT"
+OUT=$(run_tool find "{\"path\":\"$TMPD/search\",\"name\":\"a.txt\"}")
+printf '%s' "$OUT" | grep -q 'src/a.txt' && ! printf '%s' "$OUT" | grep -q node_modules \
+  && pass "ED-13" "find prunes noisy directories" || fail "ED-13" "find exclusions" "got=$OUT"
+PIPE=1; EFFORT=medium; handle_cmd '/effort xh' >/dev/null 2>/dev/null
+[ "$EFFORT" = xhigh ] && pass "ED-14" "/effort changes effort interactively" || fail "ED-14" "/effort" "EFFORT=$EFFORT"
 
 rm "$F"
 

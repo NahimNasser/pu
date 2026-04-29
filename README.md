@@ -2,7 +2,7 @@
   <img src="logo.png" alt="pu.sh" width="500">
 </p>
 
-<p align="center"><strong>A full coding agent in 310 lines of shell. Pronounced exactly how you think.</strong></p>
+<p align="center"><strong>A full coding-agent harness in 400 lines of shell. Pronounced exactly how you think.</strong></p>
 
 <p align="center"><em>Finally, a slop cannon small enough to fit in your pocket.</em></p>
 
@@ -11,7 +11,7 @@ curl -sL https://raw.githubusercontent.com/NahimNasser/pu/main/pu.sh -o pu.sh &&
 ./pu.sh "refactor auth.py to use JWT"
 ```
 
-That's the entire install. No npm. No pip. No docker. No runtime. 19KB of shell, a `curl` binary, and an API key.
+That's the entire install. No npm. No pip. No Docker. No runtime. One shell file, common Unix tools, `curl`, `awk`, and an API key.
 
 ## What
 
@@ -19,180 +19,202 @@ That's the entire install. No npm. No pip. No docker. No runtime. 19KB of shell,
 # Zero install. Literally.
 curl -sL https://raw.githubusercontent.com/NahimNasser/pu/main/pu.sh > pu.sh && chmod +x pu.sh
 
-# Push some code
-./pu.sh "refactor auth.py to use JWT"
+# First run walks you through provider, key, model, and effort.
+./pu.sh
 
-# Interactive (multi-turn, remembers everything)
+# One-shot task.
+./pu.sh "find bugs in pu.sh"
+
+# Interactive multi-turn session.
 ./pu.sh
 > write a REST API server in Go
 > now add rate limiting
 > write tests for it
 
-# Pipe agents together because we're adults
+# Pipe agents together because we're adults.
 ./pu.sh "write the code" | ./pu.sh --pipe "review it for security bugs"
 
-# OpenAI works too
-AGENT_PROVIDER=openai AGENT_MODEL=gpt-4o ./pu.sh "your task"
+# Env-only setup still works.
+OPENAI_API_KEY=sk-... AGENT_PROVIDER=openai AGENT_MODEL=gpt-5.5 ./pu.sh "your task"
+ANTHROPIC_API_KEY=sk-ant-... AGENT_PROVIDER=anthropic AGENT_MODEL=claude-opus-4-7 ./pu.sh "your task"
 ```
 
 ## Why
 
 We ran [30+ experiments](final_report.md) to answer a question: *what's the most portable agentic harness that can run anywhere?*
 
-The answer is a shell script. The agent loop itself — send prompt, parse response, execute tool, append to history, repeat — is about 90 lines. Everything else is developer experience.
+The answer is a shell script. The agent loop itself — send prompt, parse response, execute tool, append to history, repeat — is tiny. Everything else is developer experience and hardening.
 
-**Here's the thing nobody tells you:** the `node_modules` folder of a typical coding agent weighs more than the entire Doom source code. Three times over. `pu.sh` weighs less than most README files.
+**Here's the thing nobody tells you:** the `node_modules` folder of a typical coding agent weighs more than the entire Doom source code. Three times over. `pu.sh` weighs less than many README files.
 
 ## Features
 
 | What | How |
 |---|---|
-| **7 tools** | `bash` `read` `write` `edit` `grep` `find` `ls` — same as Pi |
-| **Interactive REPL** | Multi-turn with memory. `/model` `/copy` `/export` `/skill:name` |
-| **File editing** | Surgical `oldText` → `newText` replacement (not file rewrite) |
-| **Context files** | Auto-loads `AGENTS.md` / `CLAUDE.md` from cwd up to `/` |
-| **Context size cap** | `AGENT_CONTEXT_LIMIT` env var (logs when exceeded — full trim not yet implemented) |
-| **Thinking levels** | `AGENT_THINKING=high` for reasoning-heavy tasks |
-| **Skills** | `/skill:name` loads `SKILL.md` capability packages |
-| **Prompt templates** | `/template` expands from `.pi/prompts/*.md` |
+| **7 tools** | `bash` `read` `write` `edit` `grep` `find` `ls` — Pi-shaped surface area |
+| **Interactive REPL** | Multi-turn with memory; `/model` `/effort` `/login` `/logout` `/copy` `/compact` `/export` `/skill:name` `/quit` |
+| **First-run login** | API-key wizard for Anthropic/OpenAI, optional private `~/.pu.env` save |
+| **Dual provider** | Anthropic Messages API + OpenAI Responses API |
+| **OpenAI tool loop** | Preserves `reasoning`, `function_call`, and `function_call_output` items across turns |
+| **Reasoning effort** | `AGENT_EFFORT=none|minimal|low|medium|high|xhigh|max`, gated by model support |
+| **File editing** | Surgical `oldText` → `newText` replacement; rejects empty or non-unique matches |
+| **Safer file writes/edits** | Preserves trailing newlines, uses temp files, keeps executable mode on edits |
+| **Context files** | Auto-loads `AGENTS.md` / `CLAUDE.md` from cwd upward, plus global Pi agent context if present |
+| **Auto-compaction** | Summarizes older turns when approximate context budget is exceeded; `/compact [focus]` manually compacts |
+| **Context/status line** | Shows cwd, git branch, token counts, context usage, provider, model, effort |
 | **@file references** | `@src/main.py` inlines file contents into your prompt |
-| **!command** | `!ls -la` runs bash inline from the REPL |
-| **Session export** | `/export` dumps conversation as markdown |
-| **Session forking** | `/fork` branches your session |
-| **Token tracking** | `--cost` shows input/output token counts |
-| **Pipe mode** | `--pipe` for clean output, composable with other agents |
-| **Checkpoint/resume** | `AGENT_HISTORY=file.json` saves and restores state |
-| **Confirmation mode** | `AGENT_CONFIRM=1` asks before every tool execution |
-| **Dual provider** | Anthropic + OpenAI (via `AGENT_PROVIDER` env var; model switchable mid-session via `/model`) |
+| **!command** | `!ls -la` runs shell inline from the REPL |
+| **Prompt templates** | `/name` expands `.pi/prompts/name.md` or `~/.pi/agent/prompts/name.md` |
+| **Skills** | `/skill:name` loads `SKILL.md` from local or user skill directories |
+| **Session export/fork** | `/export` writes markdown; `/fork` copies the JSONL log |
+| **Pipe mode** | `--pipe` for clean stdout, composable with other tools/agents |
+| **Checkpoint/resume** | `AGENT_HISTORY=file.json` saves and restores transcript state |
+| **Confirmation mode** | `AGENT_CONFIRM=1` asks before every tool execution; safely denies when no TTY |
 | **JSONL logging** | Every step logged as structured JSON |
+| **Regression tests** | `bash eval/test_real.sh` runs 70 no-API behavioral tests |
 
 ## What it can't do
 
-Let's be honest. The remaining 26% of Pi's features need a real runtime:
+Let's be honest. The remaining gap to a production harness needs a real runtime:
 
 - No TUI (it's a shell script, not a lifestyle)
-- No image input (base64 in shell is a war crime we chose not to commit)
-- No streaming (curl waits for the full response like a patient person)
-- No OAuth (if you need a browser popup from a shell script, reconsider your life)
-- No Windows (PowerShell people, I'm sorry, but also I'm not sorry)
-- No keyboard shortcuts (it's `read -r`, not Vim)
-- No themes (your terminal theme IS the theme)
-- No package manager (it's one file. `cp` is the package manager)
+- No streaming display (curl waits for the full response like a patient person)
+- No image input
+- No OAuth/browser login; API keys only
+- No native Windows support
+- No keyboard shortcuts, path completion, themes, or raw-terminal editor
+- No package manager or TypeScript plugin SDK
+- No full model registry/pricing database
+- No general JSON parser; it uses targeted `awk` parsing for provider shapes
 
-Look, every other coding agent is a 200MB slop cannon with 1,847 npm dependencies, a webpack config, and a mass-produced hallucination pipeline. `pu.sh` is the same slop cannon but it's 310 lines and you can read every single one of them. You'll know exactly where the slop is coming from. That's not a bug, that's transparency.
-
-All 10 missing features trace back to one thing shell can't do: **raw terminal mode**. That's it. One `termios` call away from 100%.
+`pu.sh` is the same slop cannon but small enough that you can read every line and know exactly where the slop is coming from.
 
 ## The Size
 
+```text
+pu.sh                32 KB / 400 LOC  █  (sh + curl + awk + common Unix tools)
+Claude Code         209 MB            ██████████████████████████
+Goose CLI           237 MB            █████████████████████████████
+Pi + Node           281 MB            ███████████████████████████████████
+SWE-agent Docker    1.8 GB            ██████████████████████████████████████████████████████████████...
 ```
-pu.sh                19 KB    █  (sh + curl — already on every Unix box)
-Claude Code         209 MB    ██████████████████████████  (self-contained native binary)
-Goose CLI           237 MB    █████████████████████████████  (self-contained Rust binary)
-Pi + Node           281 MB    ███████████████████████████████████  (172 MB pkg + 108 MB Node 23)
-SWE-agent (Docker)  1.8 GB    ██████████████████████████████████████████████████████████████...  (uncompressed image)
-```
 
-*All numbers measured on this machine (macOS arm64, Node 23.11.0), not pulled from release pages:*
-- *pu.sh: `wc -c` on the file.*
-- *Claude Code: `npm install @anthropic-ai/claude-code` + `du -sh node_modules`. Ships an `optionalDependency` that fetches a 208 MB native Mach-O binary; doesn't need Node to run after install.*
-- *Goose: extracted `goose-aarch64-apple-darwin.tar.bz2` from the latest release (tarball is 65 MB, binary inside is 237 MB — ~3.5× compression).*
-- *Pi: `du -sh` on `node_modules/@mariozechner/pi-coding-agent` + size of the `node` binary it runs under. 132 deps bundled.*
-- *SWE-agent: `docker image inspect sweagent/swe-agent:latest --format '{{.Size}}'` → 1.78 GB uncompressed.*
-
-Roughly **~15,000× smaller** than Pi, **~13,000×** smaller than Goose, **~11,000×** smaller than Claude Code, **~100,000×** smaller than SWE-agent. Same 7 tools. Same system prompt structure. Same `AGENTS.md` loading. Same `oldText`/`newText` editing.
-
-Our entire supply chain attack surface is `curl`. We wrote our own JSON parser in `awk` because jq was one dependency too many. Your average coding agent has more transitive dependencies than a European royal family tree — and about the same chance of something inbred causing a security incident.
+*Measured locally on macOS arm64. `pu.sh` is `wc -c`/`wc -l` on the file. Larger tools include their runtime/package footprints as described in [final_report.md](final_report.md).*
 
 ## Configuration
 
-All env vars. Zero config files. Because config files are where joy goes to die.
+All env vars. Optional `~/.pu.env` is created by `/login`/first run with `0600`-style permissions and parsed with a tiny allowlist loader.
 
 | Variable | Default | What |
 |---|---|---|
-| `AGENT_MODEL` | `claude-sonnet-4-20250514` | Model |
-| `AGENT_PROVIDER` | `anthropic` | `anthropic` or `openai` |
+| `AGENT_PROVIDER` | auto from key/model, else `anthropic` | `anthropic` or `openai` |
+| `AGENT_MODEL` | `claude-opus-4-7` or `gpt-5.5` | Model id |
+| `ANTHROPIC_API_KEY` | — | Anthropic API key |
+| `OPENAI_API_KEY` | — | OpenAI API key |
+| `AGENT_EFFORT` | `medium` | `none|minimal|low|medium|high|xhigh|max`; unsupported models omit effort fields |
+| `AGENT_THINKING` | — | Legacy/Anthropic thinking hint; falls back into effort behavior |
 | `AGENT_MAX_STEPS` | `25` | Safety limit on agent loops |
-| `AGENT_MAX_TOKENS` | `4096` | Max tokens per response |
-| `AGENT_THINKING` | (off) | `off` `low` `medium` `high` |
+| `AGENT_MAX_TOKENS` | `4096` | Base visible-output budget; raised for higher effort |
+| `AGENT_CONTEXT_LIMIT` | `400000` OpenAI-ish / `272000` Opus-ish | Approximate context budget in bytes/chars |
+| `AGENT_RESERVE` | `16000` | Reserved context budget before compaction |
+| `AGENT_TOOL_TRUNC` | `100000` | Max non-read tool output before truncation |
+| `AGENT_READ_MAX` | `1000000` | Require offset/limit for larger file reads |
 | `AGENT_CONFIRM` | `0` | `1` = ask before each tool call |
 | `AGENT_LOG` | `agent.jsonl` | Structured log file |
-| `AGENT_HISTORY` | (none) | Checkpoint file for resume |
-| `AGENT_SYSTEM` | (built-in) | Custom system prompt |
-| `AGENT_CONTEXT_LIMIT` | `100000` | Context window chars |
+| `AGENT_HISTORY` | — | Checkpoint file for resume |
+| `AGENT_SYSTEM` | built-in | Custom system prompt |
+| `AGENT_PRICE_IN_PER_MTOK` / `AGENT_PRICE_OUT_PER_MTOK` | `0` | Optional cost display with `--cost` |
+| `AGENT_DEBUG_API` | — | Directory to capture per-call input/response JSON for debugging |
+
+## Commands
+
+| Command | What |
+|---|---|
+| `/model [id]` | Show or switch model; guesses provider from `gpt-*`/`o*`/`claude-*` |
+| `/effort [level]` | Show or set reasoning effort (`none`, `low`, `medium`, `high`, `xhigh`, etc.) |
+| `/login` | Run API-key setup wizard |
+| `/logout` | Remove `~/.pu.env` and unset in-process keys |
+| `/compact [focus]` | Summarize older context, optionally with focus text |
+| `/copy` | Copy last response via `pbcopy` or `xclip` |
+| `/export [file]` | Export JSONL session log to markdown |
+| `/fork` | Copy current JSONL log to a timestamped fork |
+| `/skill:name` | Load `name/SKILL.md` into the system prompt |
+| `/quit` | Exit |
+| `!cmd` | Run a shell command directly |
+| `/template` | If `.pi/prompts/template.md` exists, run it as a prompt |
 
 ## How it works
 
-```
+```text
 ┌─────────────────────────────────────────┐
 │  You type a thing                       │
 │  ↓                                      │
 │  curl sends it to Claude/GPT            │
 │  ↓                                      │
-│  Model says "use the write tool"        │
+│  Model asks for a tool                  │
 │  ↓                                      │
-│  Shell writes the file                  │
+│  Shell runs read/write/edit/bash/etc.   │
 │  ↓                                      │
 │  Result goes back to model              │
 │  ↓                                      │
-│  Model says "done"                      │
-│  ↓                                      │
-│  You have a file                        │
-│                                         │
-│  That's it. That's the agent.           │
+│  Model says done                        │
 └─────────────────────────────────────────┘
 ```
 
-310 lines. 7 tools. 2 providers. 1 file. 0 dependencies beyond `sh` + `curl`.
+400 lines. 7 tools. 2 providers. 1 file. No Node.
 
-The JSON parser is 30 lines of `awk`. No jq. No python. No node. Just POSIX.
+OpenAI uses `/v1/responses` with Responses-style tools and `max_output_tokens`. Anthropic uses `/v1/messages`. The parser is targeted `awk`, not a general JSON implementation.
 
 ## Testing
 
 ```sh
-# Run all 50 unit tests (no API calls, no cost)
-bash eval/run_eval.sh
+# No API calls, no cost. Current expected result: PASS: 70 FAIL: 0.
+bash eval/test_real.sh
 
-# Run the 45-capability Pi parity comparison
-bash eval/test_coverage.sh
-
-# Run live API tests (requires ANTHROPIC_API_KEY)
-bash eval/run_eval.sh live
+# Shell syntax.
+sh -n pu.sh
 ```
 
-**What the tests cover:**
-- **Portability** (6) — single file, size, shebang, syntax, deps, help
-- **Tool execution** (8) — JSON escaping, command exec, stderr, exit codes, truncation
-- **JSON parsing** (11) — Anthropic tool_use/text, OpenAI tool_calls/text, nested fields, multiline content, error responses, malformed input, key disambiguation
-- **Conversation** (5) — message construction, multi-turn, checkpoint save/load, context windowing
-- **Resilience** (5) — missing API key, empty task, bad provider, retry logic, max steps
-- **Observability** (5) — JSONL logging, valid JSON, field structure, cost tracking, verbose
-- **Composability** (5) — stdin, pipe mode, shebang, config-free, curl-pipe deploy
-- **Extensibility** (5) — system prompt, multi-provider, model config, max tokens, confirmation
+The current regression suite covers:
+
+- JSON escaping and targeted JSON extraction
+- Anthropic and OpenAI response parsing
+- OpenAI Responses request shape and reasoning gating
+- OpenAI tool continuation with `reasoning` + `function_call_output`
+- API-error reporting, curl transport failures, model-error hints, and non-retryable auth errors
+- first-run key sanitization and safe allowlist `~/.pu.env` loading
+- history save of final assistant responses
+- context compaction invariants
+- tool truncation
+- edit uniqueness/mode preservation
+- `grep`/`find` noisy-directory exclusions and `/effort` command
+- trailing-newline preservation for `write`/`edit`
+- `read limit:0`
+- spinner quietness on non-TTY stderr
 
 ## The bugs we found so you don't have to
 
-1. **`set -e` is a serial killer.** `[ -f file ] && do_thing` returns exit code 1 when the file doesn't exist. `set -e` interprets this as a fatal error and silently kills your script. No message. No stack trace. Just death. We removed `set -e` and the entire agent started working. ([experiment 29](final_report.md))
-
-2. **macOS sed ≠ GNU sed.** The `:a;N;$!ba` multiline pattern that every Stack Overflow answer uses doesn't work on macOS. We replaced it with `awk` because `awk` works everywhere and doesn't gaslight you.
-
-3. **jq was a dependency.** We wrote 30 lines of awk to parse JSON rather than require `brew install jq`. The awk parser handles nested objects, escaped quotes, multiline strings, and key disambiguation (`"type":"function"` vs `"function":{}`). One fewer install step is one fewer reason someone closes the tab.
-
-4. **Heredocs don't survive JSON.** When the model returns `cat > file << 'EOF'`, the heredoc body gets mangled by JSON escaping. Solution: tell the model to use the `write` tool instead. System prompt engineering > parsing heroics.
+1. **`set -e` is a serial killer.** `[ -f file ] && do_thing` returns 1 when the file doesn't exist. `set -e` treats that as fatal and silently kills your script. We use `set -u`, not `set -e`.
+2. **macOS sed ≠ GNU sed.** The classic multiline sed trick breaks on BSD sed. Use `awk`.
+3. **jq was a dependency.** We wrote targeted `awk` JSON extraction to keep install at zero.
+4. **Heredocs don't survive JSON reliably.** The system prompt steers models to the `write` tool instead.
+5. **OpenAI tool calling is not Chat Completions anymore.** For reasoning + tools, `pu.sh` uses Responses API, carries `reasoning` items forward, and sends `function_call_output` items.
+6. **Shell command substitution eats trailing newlines.** `write` and `edit` use sentinel capture to preserve final `\n`.
+7. **Generic status spam is worse than silence.** If the model doesn't provide a real pre-tool preamble, `pu.sh` just prints the actual tool call instead of `Inspecting with tools...` forever.
 
 ## Prior art & credits
 
-`pu.sh` is a derived work, and we want to be loud about it. The system prompt structure, the 7-tool surface (`bash` `read` `write` `edit` `grep` `find` `ls`), the `oldText`/`newText` editing model, and the `AGENTS.md` loading convention all come straight from **[Pi](https://pi.dev/)**. Huge thanks and respect to the Pi team — they figured out the right shape of a small, honest coding agent, and we just rewrote the runtime in shell. If you want a real, extensible, production-grade agent built by people who clearly know what they're doing, go use Pi. They earned it.
+`pu.sh` is a derived work, and we want to be loud about it. The system prompt structure, 7-tool surface (`bash` `read` `write` `edit` `grep` `find` `ls`), exact-text editing model, context-file convention, and skill/template ideas are inspired by **[Pi](https://pi.dev/)**. Huge thanks and respect to the Pi team.
 
-We [compared against Pi](eval/COMPARISON.md) feature-by-feature. Pi wins on extensibility (TypeScript plugins, TUI, 20+ providers). We win on portability (curl it onto a Raspberry Pi in 1 second). Different tools for different problems.
+We [compare against Pi](eval/COMPARISON.md) feature-by-feature. Pi wins on extensibility, TUI, providers, safety, and production polish. `pu.sh` wins on portability and inspectability.
 
 ## FAQ
 
 **Is this production-ready?**
-It's called `pu.sh`. It's a 19KB slop cannon that talks to Claude via `curl`. You tell me.
+It's called `pu.sh`. It's a 32KB slop cannon that talks to LLM APIs via `curl`. You tell me.
 
 **Should I use this instead of Pi/Claude Code/Cursor?**
-For daily coding, no. Use a real tool. Those are industrial-grade slop cannons with proper aiming mechanisms. This is more of a slop pistol. For CI/CD, containers, edge, quick scripts, or understanding how agents actually work — `./pu.sh` and see what happens.
+For daily coding, probably not. Use a real tool. For CI/CD, containers, edge boxes, quick scripts, or understanding how agents actually work — `./pu.sh` and see what happens.
 
 **How do I pronounce it?**
 However makes your coworkers the most uncomfortable.
@@ -201,8 +223,8 @@ However makes your coworkers the most uncomfortable.
 It's `pu.sh`. As in push. As in `./pu.sh "deploy to prod"`. The fact that it sounds like something else is entirely coincidental and we are very serious engineers.
 
 **Did an AI write this?**
-An AI and a human ran 30+ experiments over a multi-hour session, arguing about `set -e`, debating whether `awk` is portable, and discovering that the meaning of life is a valid integration test. The shell script was co-written. The bugs were all shell's fault.
+An AI and a human ran experiments, argued with shell, broke OpenAI schemas, fixed them, and learned once again that the real production incident was `set -e` all along.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). It's 310 lines. Go nuts.
+MIT — see [LICENSE](LICENSE). It's 400 lines. Go nuts.

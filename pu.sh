@@ -6,9 +6,9 @@ _spinner(){ tput civis >&2 2>/dev/null; while :;do for f in '[   ]' '[=  ]' '[==
 spin_start(){ [ -t 2 ]||return 0;SPIN_MSG="$*";[ -n "$SPIN_PID" ]&&return 0;_spinner& SPIN_PID=$!;}
 spin_stop(){ [ -n "$SPIN_PID" ]&&{ kill "$SPIN_PID" 2>/dev/null;wait "$SPIN_PID" 2>/dev/null;SPIN_PID="";};[ -t 2 ]&&{ printf '\r\033[K' >&2;tput cnorm >&2 2>/dev/null||true;};}
 _interrupt(){ spin_stop; if [ "$_STATE" = busy ]; then [ $_CHILD -ne 0 ] && kill $_CHILD 2>/dev/null && wait $_CHILD 2>/dev/null; _CHILD=0; _STATE=idle; else exit 130; fi;}
-trap '_interrupt' INT; trap '' PIPE; [ -z "${ANTHROPIC_API_KEY:-}${OPENAI_API_KEY:-}" ] && [ -f "$HOME/.pu.env" ] && . "$HOME/.pu.env"
-_clean_key(){ printf '%s' "$1" | sed 's/^OPENAI_API_KEY=//;s/^ANTHROPIC_API_KEY=//;s/^"//;s/"$//;s/^'\''//;s/'\''$//' | tr -d '[:space:]'; }
-[ -n "${OPENAI_API_KEY:-}" ] && OPENAI_API_KEY=$(_clean_key "$OPENAI_API_KEY"); [ -n "${ANTHROPIC_API_KEY:-}" ] && ANTHROPIC_API_KEY=$(_clean_key "$ANTHROPIC_API_KEY")
+trap '_interrupt' INT; trap '' PIPE; _clean_key(){ printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^export[[:space:]]*//;s/^OPENAI_API_KEY=//;s/^ANTHROPIC_API_KEY=//;s/^"//;s/"$//;s/^'\''//;s/'\''$//' | tr -d '[:space:]'; }
+_load_env(){ [ -f "$HOME/.pu.env" ] || return; while IFS='=' read -r k v; do k=$(printf '%s' "$k" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^export[[:space:]]*//'); v=$(_clean_key "$v"); case "$k" in OPENAI_API_KEY) [ -z "${OPENAI_API_KEY:-}" ] && OPENAI_API_KEY=$v;; ANTHROPIC_API_KEY) [ -z "${ANTHROPIC_API_KEY:-}" ] && ANTHROPIC_API_KEY=$v;; AGENT_PROVIDER) [ -z "${AGENT_PROVIDER:-}" ] && AGENT_PROVIDER=$v;; AGENT_MODEL) [ -z "${AGENT_MODEL:-}" ] && AGENT_MODEL=$v;; AGENT_EFFORT) [ -z "${AGENT_EFFORT:-}" ] && AGENT_EFFORT=$v;; esac; done < "$HOME/.pu.env"; }
+[ -z "${ANTHROPIC_API_KEY:-}${OPENAI_API_KEY:-}" ] && _load_env; [ -n "${OPENAI_API_KEY:-}" ] && OPENAI_API_KEY=$(_clean_key "$OPENAI_API_KEY"); [ -n "${ANTHROPIC_API_KEY:-}" ] && ANTHROPIC_API_KEY=$(_clean_key "$ANTHROPIC_API_KEY")
 if [ -n "${AGENT_PROVIDER:-}" ]; then PROVIDER=$AGENT_PROVIDER; else case "${AGENT_MODEL:-}" in gpt-*|o1*|o3*|o4*) PROVIDER=openai;; claude-*) PROVIDER=anthropic;; *) [ -n "${OPENAI_API_KEY:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ] && PROVIDER=openai || PROVIDER=anthropic;; esac; fi
 case "$PROVIDER" in openai) MODEL="${AGENT_MODEL:-gpt-5.5}";; *) MODEL="${AGENT_MODEL:-claude-opus-4-7}";; esac
 MAX_STEPS="${AGENT_MAX_STEPS:-25}" MAX_TOKENS="${AGENT_MAX_TOKENS:-4096}" AGENT_RESERVE="${AGENT_RESERVE:-16000}" AGENT_TOOL_TRUNC="${AGENT_TOOL_TRUNC:-100000}" AGENT_READ_MAX="${AGENT_READ_MAX:-1000000}" LOG="${AGENT_LOG:-agent.jsonl}" HISTORY="${AGENT_HISTORY:-}" CONFIRM="${AGENT_CONFIRM:-0}"
@@ -163,9 +163,9 @@ parse_response(){ local resp="$1"; TY= TN= TI= TX= CB= TINP= TC=
     TC=$(jp "$resp" output); local call; call=$(jb "$TC" function_call)
     if [ -n "$call" ]; then
       TY=T; TI=$(jp "$call" call_id); [ -z "$TI" ] && TI=$(jp "$call" id)
-      TN=$(jp "$call" name); TINP=$(jp "$call" arguments); local tt; tt=$(jb "$resp" output_text); TX=$(jp "$tt" text)
+      TN=$(jp "$call" name); TINP=$(jp "$call" arguments); local tt; tt=$(jb "$resp" output_text); TX=$(jp "$tt" text); [ -z "$TX" ] && TX=$(jp "$resp" output_text)
     else
-      TY=X; local tt; tt=$(jb "$resp" output_text); TX=$(jp "$tt" text); TC=
+      TY=X; local tt; tt=$(jb "$resp" output_text); TX=$(jp "$tt" text); [ -z "$TX" ] && TX=$(jp "$resp" output_text); TC=
     fi
   fi;}
 run_tool(){ local tool_name="$1" input="$2"
@@ -224,13 +224,13 @@ run_tool(){ local tool_name="$1" input="$2"
       local gp; gp=$(jp "$input" path); [ -z "$gp" ] && gp="."
       _tool grep "$pat $(_p "$gp")"
       case "$gp" in -*) gp="./$gp";; esac
-      out=$(grep -rnE -- "$pat" "$gp" 2>&1); rc=$?; [ $rc -eq 1 ] && { out="No matches"; rc=0; }; out=$(printf '%s\n' "$out" | head -100);;
+      out=$(grep -rnIE --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=target --exclude-dir=.venv -- "$pat" "$gp" 2>&1); rc=$?; [ $rc -eq 1 ] && { out="No matches"; rc=0; }; out=$(printf '%s\n' "$out" | head -100);;
     find)
       local fp; fp=$(jp "$input" path); [ -z "$fp" ] && fp="."
       local fn; fn=$(jp "$input" name)
       _tool find "$(_p "$fp") $fn"
       case "$fp" in -*) fp="./$fp";; esac
-      if [ -n "$fn" ]; then out=$(find "$fp" -name "$fn" 2>&1 | head -100); else out=$(find "$fp" -maxdepth 3 2>&1 | head -100); fi;;
+      if [ -n "$fn" ]; then out=$(find "$fp" \( -name .git -o -name node_modules -o -name dist -o -name build -o -name target -o -name .venv \) -prune -o -name "$fn" -print 2>&1 | head -100); else out=$(find "$fp" \( -name .git -o -name node_modules -o -name dist -o -name build -o -name target -o -name .venv \) -prune -o -maxdepth 3 -print 2>&1 | head -100); fi;;
     ls)
       local lp; lp=$(jp "$input" path); [ -z "$lp" ] && lp="."
       _tool ls "$(_p "$lp")"; case "$lp" in -*) lp="./$lp";; esac; out=$(ls -la "$lp" 2>&1) || rc=$?;;
@@ -239,7 +239,6 @@ run_tool(){ local tool_name="$1" input="$2"
   esac
   M="$AGENT_TOOL_TRUNC"; [ "$tool_name" != read ] && [ ${#out} -gt "$M" ] && out="$(printf '%s\n' "$out" | awk '{a[NR]=$0}END{if(NR<=40){for(i=1;i<=NR;i++)print a[i];exit}for(i=1;i<=30;i++)print a[i];printf "...[%d lines hidden; call read with offset/limit to view a specific range]...\n",NR-40;for(i=NR-9;i<=NR;i++)print a[i]}')"
   printf '%s' "$out";}
-MSGS=""
 save(){ [ -n "$HISTORY" ] && printf '%s' "$MSGS" > "$HISTORY" || true;}
 load(){ [ -n "$HISTORY" ] && [ -f "$HISTORY" ] && MSGS=$(cat "$HISTORY") && info "Resumed: $HISTORY" && return 0; return 1;}
 append(){ MSGS=$(printf '%s' "$MSGS" | sed 's/]$//')",$1]";}
@@ -260,8 +259,7 @@ trim_context(){ local m="$1" f="${2:-}" cap=$((CTX_LIMIT-AGENT_RESERVE)) o n c h
     if(e){e=0;continue};if(c=="\\"){e=1;continue};if(c=="\""){q=!q;continue};if(q)continue
     if(c=="{"){if(d==0)s=i;d++}else if(c=="}"){d--;if(d==0)print substr($0,s,i-s+1)}}}')
   n=$(printf '%s\n' "$o" | wc -l | tr -d ' '); [ "$n" -lt 6 ] && { printf '%s' "$m"; return; }
-  c=$((n-3)); h=$(printf '%s\n' "$o" | sed -n "${c}p")
-  case "$h" in *tool_result*) c=$((c-1));; esac
+  c=$((n-3)); while :; do h=$(printf '%s\n' "$o" | sed -n "${c}p"); case "$h" in *tool_result*|*function_call_output*|*'"type":"function_call"'*) c=$((c-1));; *) break;; esac; done
   [ "$c" -lt 2 ] && { printf '%s' "$m"; return; }
   a=$(printf '%s\n' "$o" | sed -n 1p)
   r=$(printf '%s\n' "$o" | sed -n "${c},${n}p" | tr '\n' ',' | sed 's/,$//')
@@ -298,11 +296,12 @@ run_task(){ _STATE=busy; local task="$1"
     MSGS=$(trim_context "$MSGS")
     _STATE=busy
     local resp="" retry=0; while [ $retry -lt 3 ]; do
-      local rf; rf=$(mktemp); spin_start "$(_status)"; call_api "$MSGS" >"$rf" 2>&1 & _CHILD=$!; wait "$_CHILD" || true; _CHILD=0; resp=$(cat "$rf"); rm -f "$rf"; spin_stop
+      local rf cr=0; rf=$(mktemp); spin_start "$(_status)"; call_api "$MSGS" >"$rf" 2>&1 & _CHILD=$!; wait "$_CHILD" || cr=$?; _CHILD=0; resp=$(cat "$rf"); rm -f "$rf"; spin_stop; [ -n "${AGENT_DEBUG_API:-}" ] && mkdir -p "$AGENT_DEBUG_API" 2>/dev/null && { printf '%s' "$MSGS" > "$AGENT_DEBUG_API/input-$step-$retry.json"; printf '%s' "$resp" > "$AGENT_DEBUG_API/resp-$step-$retry.json"; }
       [ "$_STATE" = idle ] && { err "[interrupted]"; return 130; }
+      [ $cr -ne 0 ] && { retry=$((retry+1)); err "API transport: $(printf '%s' "$resp" | head -1)"; [ $retry -ge 3 ] && return 1; sleep $((retry*2)); continue; }
       [ -z "$resp" ] && { retry=$((retry+1)); err "Empty, retry $retry/3"; sleep $((retry*2)); continue; }
       local api_err em; api_err=$(jp "$resp" error); em=$(jp "$api_err" message)
-      case "$(printf '%s' "$em" | tr A-Z a-z)" in *incorrect*api*key*|*invalid*api*key*|*unauthorized*|*authentication*) err "API: $em"; return 1;; *context*|*token*limit*|*too*large*) [ "$ctx_retry" = 0 ] && { ctx_retry=1; err "Context full; compacting and retrying"; MSGS=$(trim_context "$MSGS" "recover from context overflow"); continue; };; esac
+      case "$(printf '%s' "$em" | tr A-Z a-z)" in *incorrect*api*key*|*invalid*api*key*|*unauthorized*|*authentication*) err "API: $em"; return 1;; *model*not*found*|*model*does*not*exist*|*model*not*exist*|*access*model*) err "API: $em"; err "Try /model MODEL"; return 1;; *context*|*token*limit*|*too*large*) [ "$ctx_retry" = 0 ] && { ctx_retry=1; err "Context full; compacting and retrying"; MSGS=$(trim_context "$MSGS" "recover from context overflow"); continue; };; esac
       [ -n "$api_err" ] && [ "$api_err" != "null" ] && [ "$api_err" != "" ] && { err "API: $em"; retry=$((retry+1)); sleep $((retry*3)); continue; }
       break; done
     [ -z "$resp" ] && { err "API failed"; log "$step" error "fail"; exit 1; }
@@ -381,7 +380,7 @@ _setup(){ local p k m e s u km dm os
 handle_cmd(){ case "$1" in
   /model|/model\ *) local nm; nm=$(printf '%s' "$1" | sed 's|^/model *||')
     [ -n "$nm" ] && { case "$nm" in gpt-*|o1*|o3*|o4*) _set_provider_model openai "$nm";; claude-*) _set_provider_model anthropic "$nm";; *) MODEL="$nm";; esac; info "Model: $MODEL ($PROVIDER)"; } || info "Current: $MODEL ($PROVIDER)"; return 0;;
-  /copy) _copy; return 0;; /fork) _fork; return 0;; /quit|/exit) exit 0;;
+  /effort|/effort\ *) local ef; ef=$(printf '%s' "$1" | sed 's|^/effort *||'); [ -n "$ef" ] && { case "$ef" in n) ef=none;; min) ef=minimal;; l) ef=low;; m) ef=medium;; h) ef=high;; x|xh) ef=xhigh;; esac; EFFORT=$ef; }; info "Effort: $EFFORT"; return 0;; /copy) _copy; return 0;; /fork) _fork; return 0;; /quit|/exit) exit 0;;
   /login) _setup; return 0;; /logout) [ -f "$HOME/.pu.env" ] && rm "$HOME/.pu.env" && info "Removed ~/.pu.env" || info "No ~/.pu.env to remove"; unset ANTHROPIC_API_KEY OPENAI_API_KEY; info "Logged out. /login or set env vars to continue."; return 0;;
   /compact|/compact\ *) MSGS=$(trim_context "$MSGS" "$(printf '%s' "$1" | sed 's|^/compact *||')"); save; info "Compacted (${#MSGS}b)"; return 0;;
   /export|/export\ *) _export "$(printf '%s' "$1" | sed 's|^/export *||')"; return 0;;
