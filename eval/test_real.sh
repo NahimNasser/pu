@@ -4,7 +4,7 @@
 #
 # Regression coverage:
 #   - json_escape control-char handling   (commit 65f6728)
-#   - jp/jb/j1st brace-in-string handling (commit 80fdf9f)
+#   - jp/jb brace-in-string handling (commit 80fdf9f)
 #   - trim_context end-to-end correctness (commit 6adc939)
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -68,9 +68,9 @@ RESTORED=$(json_field "$(printf '{"x":"%s"}' "$ESC")" 'sys.stdout.write(d["x"])'
   && pass "JE-6" "embedded quotes round-trip" \
   || fail "JE-6" "quotes" "expected: $INPUT, got: $RESTORED"
 
-# ── jp / jb / j1st: braces inside JSON string values ───────────────
+# ── jp / jb: braces inside JSON string values ─────────────────────
 echo
-printf "${B}━━━ jp / jb / j1st ━━━${N}\n"
+printf "${B}━━━ jp / jb ━━━${N}\n"
 
 # Realistic Anthropic tool_use response with a grep pattern containing { and "
 # (this is the exact shape that triggered commit 80fdf9f)
@@ -101,21 +101,11 @@ PAT=$(jp "$TINP" pattern)
   && pass "JS-5" "jp: string field with literal { and \" decoded correctly" \
   || fail "JS-5" "pattern decode" "expected: handle_cmd.*{\", got: $PAT"
 
-# j1st: first object in an array where strings contain brackets
-ARR='[{"path":"a/[1]"},{"path":"b/{2}"}]'
-F1=$(j1st "$ARR")
-valid_json "$F1" \
-  && [ "$(jp "$F1" path)" = "a/[1]" ] \
-  && pass "JS-6" "j1st: first object with [-in-string" \
-  || fail "JS-6" "j1st" "got: $F1"
+UNICODE=$(jp '{"x":"caf\u00e9 \u263a \ud83d\ude00 literal \\u00e9"}' x)
+[ "$UNICODE" = $'caf\303\251 \342\230\272 \360\237\230\200 literal \\u00e9' ] \
+  && pass "JS-5b" "jp: decodes JSON unicode escapes, preserves escaped backslash-u" \
+  || fail "JS-5b" "unicode decode" "got: $UNICODE"
 
-# Pre-fix regression: a brace in a string used to truncate or over-extend
-# extraction. Verify j1st on an object whose string has both { and }.
-WEIRD='{"role":"user","content":"text { with } braces"}'
-GOT=$(j1st "$WEIRD")
-[ "$GOT" = "$WEIRD" ] \
-  && pass "JS-7" "j1st: paired braces in string don't fool walker" \
-  || fail "JS-7" "j1st paired braces" "expected: $WEIRD, got: $GOT"
 
 # ── parse_response on tool_use response with { in pattern ──────────
 echo
@@ -303,16 +293,36 @@ OUT=$(trim_context "$SHORT_BUT_OK" "key files only")
   || fail "TC-7" "focus didn't force"
 OPENAI_BOUNDARY='[{"role":"user","content":"task"},{"role":"user","content":"old"},{"type":"reasoning","id":"rs_1","summary":[]},{"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"ok"},{"role":"user","content":"next"},{"role":"assistant","content":"done"}]'
 OUT=$(trim_context "$OPENAI_BOUNDARY" "force")
-json_field "$OUT" 'assert d[2]["type"] == "reasoning" and d[3]["type"] == "function_call"' \
+json_field "$OUT" 'types=[x.get("type") for x in d]; assert "function_call" not in types or types[types.index("function_call")-1] == "reasoning"' \
   && pass "TC-8" "trim_context keeps OpenAI reasoning before function_call" \
   || fail "TC-8" "openai reasoning/function_call boundary" "out=$OUT"
+OLD_CTX=$CTX_LIMIT OLD_RES=$AGENT_RESERVE; CTX_LIMIT=20000; AGENT_RESERVE=1000
+BIGRECENT=$(printf 'z%.0s' $(seq 1 6000))
+RECENT_BIG='[{"role":"user","content":"task"},{"role":"assistant","content":"old1"},{"role":"user","content":"old2"},{"role":"assistant","content":"old3"},{"role":"user","content":"old4"},{"role":"assistant","content":"'"$BIGRECENT"'"},{"role":"user","content":"done"}]'
+OUT=$(trim_context "$RECENT_BIG" "force")
+valid_json "$OUT" && pass "TC-8b" "trim_context keeps retained large entries as valid JSON" || fail "TC-8b" "large retained entry made invalid JSON" "out=${OUT:0:200}"
+OLD_KEEP=$AGENT_KEEP_RECENT; AGENT_KEEP_RECENT=100
+BIGUNI=$(python3 -c 'print("é"*6000)')
+UNIC_MSG='[{"role":"user","content":"task"},{"role":"assistant","content":"old1"},{"role":"user","content":"'"$BIGUNI"'"},{"role":"assistant","content":"old3"},{"role":"user","content":"old4"},{"role":"assistant","content":"old5"},{"role":"user","content":"done"}]'
+REQF="$TMPD/compact_req.json"; call_api(){ printf '%s' "$1" > "$REQF"; printf '%s' '{"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"summary"}]}'; }
+OUT=$(trim_context "$UNIC_MSG" "force")
+python3 -m json.tool "$REQF" >/dev/null 2>&1 && valid_json "$OUT" \
+  && pass "TC-8c" "trim_context builds valid summary request for huge unicode entries" \
+  || fail "TC-8c" "compaction summary request invalid" "req=$(head -c 200 "$REQF" 2>/dev/null) out=${OUT:0:120}"
+PRETTY='[{"role":"user","content":"task"},{
+  "role" : "assistant",
+  "content" : "old pretty"
+},{"role":"user","content":"old2"},{"role":"assistant","content":"old3"},{"role":"user","content":"old4"},{"role":"assistant","content":"old5"},{"role":"user","content":"done"}]'
+OUT=$(trim_context "$PRETTY" "force")
+valid_json "$OUT" && pass "TC-8d" "trim_context keeps pretty/multiline entries whole" || fail "TC-8d" "pretty entry compaction invalid" "out=$OUT"
+AGENT_KEEP_RECENT=$OLD_KEEP; CTX_LIMIT=$OLD_CTX; AGENT_RESERVE=$OLD_RES
 
-# Edge case: API returns empty TX → fallback to original
+# Edge case: API returns empty TX → local compaction note instead of passing through oversized MSGS
 call_api(){ printf '%s' '{"error":{"message":"rate limit"}}'; }
 OUT=$(trim_context "$MSGS_BIG" 2>/dev/null)
-[ "$OUT" = "$MSGS_BIG" ] \
-  && pass "TC-9" "API failure → safe fallback to original MSGS" \
-  || fail "TC-9" "fallback didn't fire"
+[ "$OUT" != "$MSGS_BIG" ] && valid_json "$OUT" && printf '%s' "$OUT" | grep -q 'compacted locally' \
+  && pass "TC-9" "API failure → local compacted fallback" \
+  || fail "TC-9" "local fallback didn't fire" "out=$OUT"
 
 sleep(){ :; }
 MSGS=; LOG="$TMPD/run_task.jsonl"; MAX_STEPS=1; PIPE=1; PROVIDER=openai; MODEL=gpt-5.5; EFFORT_OK=1
@@ -325,11 +335,21 @@ ERR=$(run_task "hi" 2>&1 >/dev/null); RC=$?; CNT_N=$(wc -l < "$CNT" | tr -d ' ')
 [ $RC -ne 0 ] && [ "$CNT_N" = 1 ] && printf '%s' "$ERR" | grep -q 'Incorrect API key' \
   && pass "TC-11" "run_task: auth errors are not retried" \
   || fail "TC-11" "auth error retry behavior" "rc=$RC calls=$CNT_N err=$ERR"
+CNT="$TMPD/jsonerr_count"; : > "$CNT"; call_api(){ echo x >> "$CNT"; printf '%s' '{"error":{"message":"Invalid body: failed to parse JSON value"}}'; }
+ERR=$(run_task "hi" 2>&1 >/dev/null); RC=$?; CNT_N=$(wc -l < "$CNT" | tr -d ' ')
+[ $RC -ne 0 ] && [ "$CNT_N" = 1 ] && printf '%s' "$ERR" | grep -q 'Invalid body' \
+  && pass "TC-11b" "run_task: invalid request JSON is not retried" \
+  || fail "TC-11b" "invalid JSON retry behavior" "rc=$RC calls=$CNT_N err=$ERR"
 CNT="$TMPD/transport_count"; : > "$CNT"; call_api(){ echo x >> "$CNT"; printf 'curl: (6) Could not resolve host\n'; return 6; }
 ERR=$(run_task "hi" 2>&1 >/dev/null); RC=$?; CNT_N=$(wc -l < "$CNT" | tr -d ' ')
 [ $RC -ne 0 ] && [ "$CNT_N" = 3 ] && printf '%s' "$ERR" | grep -q 'API transport' && ! printf '%s' "$ERR" | grep -q 'Empty final\|Max steps' \
   && pass "TC-12" "run_task: curl transport failures retry then report transport" \
   || fail "TC-12" "transport error masked" "rc=$RC calls=$CNT_N err=$ERR"
+AFTER="$TMPD/after_empty"; MSGS=; call_api(){ printf ''; }
+( run_task "hi" >/dev/null 2>/dev/null; r=$?; printf after > "$AFTER"; exit $r ); RC=$?
+[ $RC -ne 0 ] && [ -f "$AFTER" ] \
+  && pass "TC-12b" "run_task: empty API response returns instead of exiting shell" \
+  || fail "TC-12b" "empty response exited caller" "rc=$RC after=$(test -f "$AFTER" && echo yes || echo no)"
 MSGS=; AGENT_DEBUG_API="$TMPD/dbg"; call_api(){ printf '%s' '{"output_text":"ok","usage":{"input_tokens":1,"output_tokens":1}}'; }
 run_task "hi" >/dev/null 2>/dev/null; unset AGENT_DEBUG_API
 [ -s "$TMPD/dbg/input-1-0.json" ] && [ -s "$TMPD/dbg/resp-1-0.json" ] \
@@ -396,7 +416,7 @@ printf "${B}━━━ edit tool ━━━${N}\n"
 
 # Replicate the inline edit awk from pu.sh:196 for direct testing.
 edit_replace(){ local file="$1" old="$2" new="$3"
-  OLD="$old" NEW="$new" awk 'BEGIN{RS="\0";ORS="";o=ENVIRON["OLD"];n=ENVIRON["NEW"]}{i=index($0,o);while(i>0){printf "%s%s",substr($0,1,i-1),n;$0=substr($0,i+length(o));i=index($0,o)}printf "%s",$0}' "$file"
+  OLD="$old" NEW="$new" awk 'BEGIN{RS="\001";ORS="";o=ENVIRON["OLD"];n=ENVIRON["NEW"]}{i=index($0,o);while(i>0){printf "%s%s",substr($0,1,i-1),n;$0=substr($0,i+length(o));i=index($0,o)}printf "%s",$0}' "$file"
 }
 
 # ED-1: single-line edit
@@ -426,39 +446,45 @@ case "$OUT" in *"REPLACED"*) pass "ED-4" "oldText with & and backslash" ;;
   *) fail "ED-4" "special chars" "got: $OUT" ;; esac
 
 PIPE=1; CONFIRM=0
+printf '%s\n' 'prefix' 'MSGS=; AGENT_DEBUG_API="$TMPD/dbg"; call_api(){ echo '\''{"output_text":"ok","usage":{"input_tokens":1,"output_tokens":1}}'\''; }' 'suffix' > "$F"
+OLD_LINE='MSGS=; AGENT_DEBUG_API="$TMPD/dbg"; call_api(){ echo '\''{"output_text":"ok","usage":{"input_tokens":1,"output_tokens":1}}'\''; }'
+OUT=$(run_tool edit "$(python3 -c 'import json,sys; print(json.dumps({"path":sys.argv[1],"oldText":sys.argv[2],"newText":"DEBUG_LINE"}, separators=(",",":")))' "$F" "$OLD_LINE")")
+grep -q DEBUG_LINE "$F" && pass "ED-5" "edit matches exact oldText beyond first line" || fail "ED-5" "edit missed later exact oldText" "out=$OUT"
 printf 'dup\ndup\n' > "$F"
 OUT=$(run_tool edit "{\"path\":\"$F\",\"oldText\":\"dup\",\"newText\":\"X\"}")
-case "$OUT" in *"matched multiple"*) pass "ED-5" "edit tool rejects non-unique oldText" ;; *) fail "ED-5" "duplicate oldText not rejected" "got: $OUT" ;; esac
+case "$OUT" in *"matched multiple"*"larger unique"*) pass "ED-6" "edit tool rejects non-unique oldText with guidance" ;; *) fail "ED-6" "duplicate oldText not rejected" "got: $OUT" ;; esac
 chmod 755 "$F"; printf 'one\n' > "$F"; run_tool edit "{\"path\":\"$F\",\"oldText\":\"one\",\"newText\":\"two\"}" >/dev/null
 MODE=$(stat -f %Lp "$F" 2>/dev/null || stat -c %a "$F")
-[ "$MODE" = 755 ] && pass "ED-6" "edit tool preserves executable mode" || fail "ED-6" "mode changed" "mode=$MODE"
+[ "$MODE" = 755 ] && pass "ED-7" "edit tool preserves executable mode" || fail "ED-7" "mode changed" "mode=$MODE"
+OUT=$(run_tool edit "{\"path\":\"$F\",\"oldText\":\"missing\",\"newText\":\"X\"}")
+printf '%s' "$OUT" | grep -q 'Read exact surrounding lines' && pass "ED-8" "edit not-found error gives retry guidance" || fail "ED-8" "edit guidance" "got=$OUT"
 OUT=$(run_tool grep "{\"path\":\"$F\",\"pattern\":\"absent\"}")
-[ "$OUT" = "No matches" ] && pass "ED-7" "grep no-match is explicit" || fail "ED-7" "grep no-match" "got: $OUT"
+[ "$OUT" = "No matches" ] && pass "ED-9" "grep no-match is explicit" || fail "ED-9" "grep no-match" "got: $OUT"
 OUT=$(run_tool read "{\"path\":\"$F\",\"limit\":0}")
-[ -z "$OUT" ] && pass "ED-8" "read limit:0 returns empty cleanly" || fail "ED-8" "read limit 0" "got: $OUT"
+[ -z "$OUT" ] && pass "ED-10" "read limit:0 returns empty cleanly" || fail "ED-10" "read limit 0" "got: $OUT"
 run_tool write "{\"path\":\"$F\",\"content\":\"a\\n\"}" >/dev/null
-[ "$(wc -c < "$F" | tr -d ' ')" = 2 ] && pass "ED-9" "write preserves trailing newline" || fail "ED-9" "write newline stripped" "bytes=$(wc -c < "$F")"
+[ "$(wc -c < "$F" | tr -d ' ')" = 2 ] && pass "ED-11" "write preserves trailing newline" || fail "ED-11" "write newline stripped" "bytes=$(wc -c < "$F")"
 printf 'a\nb\nc' > "$F"; run_tool edit "{\"path\":\"$F\",\"oldText\":\"b\\nc\",\"newText\":\"B\\nC\\n\"}" >/dev/null
-[ "$(tail -c 1 "$F" | od -An -tx1 | tr -d ' ')" = 0a ] && pass "ED-10" "edit preserves trailing newline in newText" || fail "ED-10" "edit newline stripped" "od=$(od -An -tx1 "$F")"
-ERRF="$TMPD/spin.err"; spin_stop 2>"$ERRF"; [ ! -s "$ERRF" ] && pass "ED-11" "spin_stop is quiet on non-tty stderr" || fail "ED-11" "spinner leaked escapes" "bytes=$(wc -c < "$ERRF")"
+[ "$(tail -c 1 "$F" | od -An -tx1 | tr -d ' ')" = 0a ] && pass "ED-12" "edit preserves trailing newline in newText" || fail "ED-12" "edit newline stripped" "od=$(od -An -tx1 "$F")"
+ERRF="$TMPD/spin.err"; spin_stop 2>"$ERRF"; [ ! -s "$ERRF" ] && pass "ED-13" "spin_stop is quiet on non-tty stderr" || fail "ED-13" "spinner leaked escapes" "bytes=$(wc -c < "$ERRF")"
 mkdir -p "$TMPD/search/node_modules" "$TMPD/search/src"; printf match > "$TMPD/search/node_modules/a.txt"; printf match > "$TMPD/search/src/a.txt"
-OUT=$(run_tool grep "{\"path\":\"$TMPD/search\",\"pattern\":\"match\"}")
-printf '%s' "$OUT" | grep -q 'src/a.txt' && ! printf '%s' "$OUT" | grep -q node_modules \
-  && pass "ED-12" "grep excludes noisy directories" || fail "ED-12" "grep exclusions" "got=$OUT"
+OUT=$(run_tool grep "{\"path\":\"$TMPD/search\",\"pattern\":\"match\"}" 2>"$TMPD/grep.err")
+printf '%s' "$OUT" | grep -q 'src/a.txt' && ! printf '%s' "$OUT" | grep -q node_modules && ! grep -q 'Broken pipe' "$TMPD/grep.err" \
+  && pass "ED-14" "grep excludes noisy directories without broken pipe noise" || fail "ED-14" "grep exclusions" "got=$OUT err=$(cat "$TMPD/grep.err")"
 OUT=$(run_tool find "{\"path\":\"$TMPD/search\",\"name\":\"a.txt\"}")
 printf '%s' "$OUT" | grep -q 'src/a.txt' && ! printf '%s' "$OUT" | grep -q node_modules \
-  && pass "ED-13" "find prunes noisy directories" || fail "ED-13" "find exclusions" "got=$OUT"
+  && pass "ED-15" "find prunes noisy directories" || fail "ED-15" "find exclusions" "got=$OUT"
 PIPE=1; EFFORT=medium; handle_cmd '/effort xh' >/dev/null 2>/dev/null
-[ "$EFFORT" = xhigh ] && pass "ED-14" "/effort changes effort interactively" || fail "ED-14" "/effort" "EFFORT=$EFFORT"
-MSGS='[{"role":"user","content":"hi"}]'; LAST_RESP=hi; HISTORY="$TMPD/flush_hist.json"; handle_cmd '/flush' >/dev/null 2>/dev/null
-[ -z "$MSGS" ] && [ -z "$LAST_RESP" ] && [ "$(cat "$HISTORY")" = '[]' ] \
-  && pass "ED-15" "/flush clears conversation memory and history" || fail "ED-15" "/flush" "MSGS=$MSGS LAST=$LAST_RESP hist=$(cat "$HISTORY")"
+[ "$EFFORT" = xhigh ] && pass "ED-16" "/effort changes effort interactively" || fail "ED-16" "/effort" "EFFORT=$EFFORT"
+MSGS='[{"role":"user","content":"hi"}]'; HISTORY="$TMPD/flush_hist.json"; handle_cmd '/flush' >/dev/null 2>/dev/null
+[ -z "$MSGS" ] && [ "$(cat "$HISTORY")" = '[]' ] \
+  && pass "ED-17" "/flush clears conversation memory and history" || fail "ED-17" "/flush" "MSGS=$MSGS hist=$(cat "$HISTORY")"
 MSGS=x; load >/dev/null 2>/dev/null; RC=$?
-[ $RC -ne 0 ] && [ -z "$MSGS" ] && pass "ED-16" "empty [] history is not treated as resumed" || fail "ED-16" "empty history resume" "rc=$RC MSGS=$MSGS"
+[ $RC -ne 0 ] && [ -z "$MSGS" ] && pass "ED-18" "empty [] history is not treated as resumed" || fail "ED-18" "empty history resume" "rc=$RC MSGS=$MSGS"
 LOG="$TMPD/replay.jsonl"; printf '%s\n' '{"s":0,"t":"start","c":"old"}' '{"s":1,"t":"tool_call","c":"read: {\"path\":\"pu.sh\"}"}' '{"s":2,"t":"response","c":"done"}' > "$LOG"; INTERACTIVE=1
 OUT=$(_replay 2>&1 >/dev/null)
 printf '%s' "$OUT" | grep -q '>.*old' && printf '%s' "$OUT" | grep -q 'read:' && printf '%s' "$OUT" | grep -q done \
-  && pass "ED-17" "resume replay shows last messages" || fail "ED-17" "replay" "out=$OUT"
+  && pass "ED-19" "resume replay shows last messages" || fail "ED-19" "replay" "out=$OUT"
 
 rm "$F"
 
@@ -466,7 +492,7 @@ rm "$F"
 echo
 printf "${B}━━━ real-world workflows ━━━${N}\n"
 
-# Full CLI startup with fake curl: loads AGENTS.md and expands @file refs into
+# Full CLI startup with fake curl: loads AGENTS.md into
 # the actual API request payload.
 cat > "$TMPD/bin/curl" <<'EOF'
 #!/bin/sh
@@ -481,10 +507,10 @@ CLI_PROJ="$TMPD/cli project"; mkdir -p "$CLI_PROJ"
 printf 'Project rule: always mention ACME-42.\n' > "$CLI_PROJ/AGENTS.md"
 printf 'incident id: INC-123\nroot cause: cache stampede\n' > "$CLI_PROJ/input.md"
 CAP="$TMPD/cli_payload.json"
-CLI_OUT=$(cd "$CLI_PROJ" && PATH="$TMPD/bin:$PATH" PU_CAPTURE="$CAP" OPENAI_API_KEY=dummy AGENT_PROVIDER=openai AGENT_MODEL=gpt-4o AGENT_LOG="$TMPD/cli.jsonl" "$AGENT" -n 'Summarize @input.md for the changelog' 2>/dev/null); CLI_RC=$?
-[ $CLI_RC -eq 0 ] && [ "$CLI_OUT" = "cli ok" ] && [ -s "$CLI_PROJ/.pu-history.json" ] && json_field "$(cat "$CAP")" 'assert "Project rule: always mention ACME-42" in d["instructions"] and "[file: input.md]" in d["input"][0]["content"] and "cache stampede" in d["input"][0]["content"]' \
-  && pass "RW-1" "CLI loads context/@file and writes default history" \
-  || fail "RW-1" "CLI context/@file/history integration" "rc=$CLI_RC out=$CLI_OUT payload=$(cat "$CAP" 2>/dev/null)"
+CLI_OUT=$(cd "$CLI_PROJ" && PATH="$TMPD/bin:$PATH" PU_CAPTURE="$CAP" OPENAI_API_KEY=dummy AGENT_PROVIDER=openai AGENT_MODEL=gpt-4o AGENT_LOG="$TMPD/cli.jsonl" "$AGENT" -n 'Summarize input.md for the changelog' 2>/dev/null); CLI_RC=$?
+[ $CLI_RC -eq 0 ] && [ "$CLI_OUT" = "cli ok" ] && [ -s "$CLI_PROJ/.pu-history.json" ] && json_field "$(cat "$CAP")" 'assert "Project rule: always mention ACME-42" in d["instructions"] and d["input"][0]["content"] == "Summarize input.md for the changelog"' \
+  && pass "RW-1" "CLI loads context and writes default history" \
+  || fail "RW-1" "CLI context/history integration" "rc=$CLI_RC out=$CLI_OUT payload=$(cat "$CAP" 2>/dev/null)"
 
 CAP="$TMPD/pipe_payload.json"
 printf 'stdin review notes\n' | (cd "$CLI_PROJ" && PATH="$TMPD/bin:$PATH" PU_CAPTURE="$CAP" OPENAI_API_KEY=dummy AGENT_PROVIDER=openai AGENT_MODEL=gpt-4o "$AGENT" --pipe 'plus suffix' >/dev/null 2>"$TMPD/pipe.err"); CLI_RC=$?
@@ -496,7 +522,7 @@ printf 'stdin review notes\n' | (cd "$CLI_PROJ" && PATH="$TMPD/bin:$PATH" PU_CAP
 # realistic path/content, reads it back, then returns a final answer.
 RW_DIR="$TMPD/rw project"; mkdir -p "$RW_DIR"; OLD_PWD=$(pwd); cd "$RW_DIR" || exit 1
 PIPE=1; CONFIRM=0; MSGS=; HISTORY=; LOG="$TMPD/rw_anthropic.jsonl"; MAX_STEPS=5
-PROVIDER=anthropic; MODEL=claude-opus-4-7; EFFORT_OK=1; TOKEN_IN=0; TOKEN_OUT=0; COST_USD=0
+PROVIDER=anthropic; MODEL=claude-opus-4-7; ANTHROPIC_API_KEY=dummy; EFFORT_OK=1; TOKEN_IN=0; TOKEN_OUT=0; COST_USD=0
 RW_COUNT="$TMPD/rw_anth.count"; printf 0 > "$RW_COUNT"
 call_api(){ RW_N=$(( $(cat "$RW_COUNT") + 1 )); printf '%s' "$RW_N" > "$RW_COUNT"; case "$RW_N" in
   1) printf '%s' '{"content":[{"type":"text","text":"I will create the note."},{"type":"tool_use","id":"toolu_write","name":"write","input":{"path":"notes/plan \u00fc.txt","content":"alpha\nbeta \"quoted\"\n"}}],"usage":{"input_tokens":10,"output_tokens":5}}' ;;

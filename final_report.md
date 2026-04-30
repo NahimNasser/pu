@@ -12,7 +12,7 @@
 1 shell file
 2 providers: Anthropic + OpenAI
 7 tools: bash, read, write, edit, grep, find, ls
-84 no-API regression tests passing
+90 no-API regression tests passing
 ```
 
 It started as an experiment in how small a coding-agent harness could be. It ended as a surprisingly capable, still tiny, still very honest shell implementation of the core agent loop.
@@ -63,8 +63,8 @@ The script grew back up as we added the pieces that make a coding agent feel rea
 ✅ prompt templates
 ✅ default checkpoint/resume via `.pu-history.json`
 ✅ event logging via `.pu-events.jsonl`
-✅ session export/fork
-✅ auto/manual compaction
+✅ session export
+✅ auto/manual compaction with recent-tail budget
 ✅ status line with cwd/git/tokens/context/provider/model/effort
 ✅ `/effort` command
 ✅ debug API capture with `AGENT_DEBUG_API`
@@ -184,14 +184,13 @@ pu.sh
     ├── `.pu-events.jsonl` event log
     ├── `.pu-history.json` / AGENT_HISTORY checkpoint
     ├── /export
-    └── /fork
 ```
 
 ## The numbers
 
 ```text
-Current pu.sh:       400 LOC / 32 KB
-Regression suite:    84 behavioral tests
+Current pu.sh:       396 LOC / 37 KB
+Regression suite:    90 behavioral tests
 Providers:           2
 Tools:               7
 Hard runtime deps:   sh + curl + awk + common Unix tools

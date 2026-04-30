@@ -52,7 +52,7 @@ The answer is a shell script. The agent loop itself — send prompt, parse respo
 | What | How |
 |---|---|
 | **7 tools** | `bash` `read` `write` `edit` `grep` `find` `ls` — Pi-shaped surface area |
-| **Interactive REPL** | Multi-turn with memory; `/model` `/effort` `/login` `/logout` `/flush` `/copy` `/compact` `/export` `/skill:name` `/quit` |
+| **Interactive REPL** | Multi-turn with memory; `/model` `/effort` `/login` `/logout` `/flush` `/compact` `/export` `/skill:name` `/quit` |
 | **First-run login** | API-key wizard for Anthropic/OpenAI, optional private `~/.pu.env` save |
 | **Dual provider** | Anthropic Messages API + OpenAI Responses API |
 | **OpenAI tool loop** | Preserves `reasoning`, `function_call`, and `function_call_output` items across turns |
@@ -62,16 +62,15 @@ The answer is a shell script. The agent loop itself — send prompt, parse respo
 | **Context files** | Auto-loads `AGENTS.md` / `CLAUDE.md` from cwd upward, plus global Pi agent context if present |
 | **Auto-compaction** | Summarizes older turns when approximate context budget is exceeded; `/compact [focus]` manually compacts |
 | **Context/status line** | Shows cwd, git branch, token counts, context usage, provider, model, effort |
-| **@file references** | `@src/main.py` inlines file contents into your prompt |
 | **!command** | `!ls -la` runs shell inline from the REPL |
 | **Prompt templates** | `/name` expands `.pi/prompts/name.md` or `~/.pi/agent/prompts/name.md` |
 | **Skills** | `/skill:name` loads `SKILL.md` from local or user skill directories |
-| **Session export/fork** | `/export` writes markdown; `/fork` copies `.pu-events.jsonl` |
+| **Session export** | `/export` writes markdown from `.pu-events.jsonl` |
 | **Pipe mode** | `--pipe` for clean stdout, composable with other tools/agents |
 | **Checkpoint/resume** | Writes `.pu-history.json` by default; override with `AGENT_HISTORY=file.json` |
 | **Confirmation mode** | `AGENT_CONFIRM=1` asks before every tool execution; safely denies when no TTY |
 | **Event log** | Every step logged to `.pu-events.jsonl` as structured JSONL |
-| **Regression tests** | `bash eval/test_real.sh` runs 84 no-API behavioral tests |
+| **Regression tests** | `bash eval/test_real.sh` runs 90 no-API behavioral tests |
 
 ## What it can't do
 
@@ -92,7 +91,7 @@ Let's be honest. The remaining gap to a production harness needs a real runtime:
 ## The Size
 
 ```text
-pu.sh                32 KB / 400 LOC  █  (sh + curl + awk + common Unix tools)
+pu.sh                37 KB / 396 LOC  █  (sh + curl + awk + common Unix tools)
 Claude Code         209 MB            ██████████████████████████
 Goose CLI           237 MB            █████████████████████████████
 Pi + Node           281 MB            ███████████████████████████████████
@@ -117,6 +116,7 @@ All env vars. Optional `~/.pu.env` is created by `/login`/first run with `0600`-
 | `AGENT_MAX_TOKENS` | `4096` | Base visible-output budget; raised for higher effort |
 | `AGENT_CONTEXT_LIMIT` | `400000` OpenAI-ish / `272000` Opus-ish | Approximate context budget in bytes/chars |
 | `AGENT_RESERVE` | `16000` | Reserved context budget before compaction |
+| `AGENT_KEEP_RECENT` | `80000` | Approx bytes/chars of recent transcript to keep after compaction |
 | `AGENT_TOOL_TRUNC` | `100000` | Max non-read tool output before truncation |
 | `AGENT_READ_MAX` | `1000000` | Require offset/limit for larger file reads |
 | `AGENT_CONFIRM` | `0` | `1` = ask before each tool call |
@@ -136,9 +136,7 @@ All env vars. Optional `~/.pu.env` is created by `/login`/first run with `0600`-
 | `/logout` | Remove `~/.pu.env` and unset in-process keys |
 | `/flush` | Clear conversation memory and reset the history file to `[]` |
 | `/compact [focus]` | Summarize older context, optionally with focus text |
-| `/copy` | Copy last response via `pbcopy` or `xclip` |
 | `/export [file]` | Export event log to markdown |
-| `/fork` | Copy current event log to a timestamped fork |
 | `/skill:name` | Load `name/SKILL.md` into the system prompt |
 | `/quit` | Exit |
 | `!cmd` | Run a shell command directly |
@@ -166,10 +164,22 @@ All env vars. Optional `~/.pu.env` is created by `/login`/first run with `0600`-
 
 OpenAI uses `/v1/responses` with Responses-style tools and `max_output_tokens`. Anthropic uses `/v1/messages`. The parser is targeted `awk`, not a general JSON implementation.
 
+## How it works
+
+The short version:
+
+```text
+prompt → provider → tool call → shell tool → tool result → repeat
+```
+
+`pu.sh` writes `.pu-history.json` for resumable model memory and `.pu-events.jsonl` for event replay/export. Long sessions auto-compact by summarizing older transcript entries and keeping a bounded recent tail.
+
+For details, see [How pu works](docs/how-pu-works.md).
+
 ## Testing
 
 ```sh
-# No API calls, no cost. Current expected result: PASS: 84 FAIL: 0.
+# No API calls, no cost. Current expected result: PASS: 90 FAIL: 0.
 bash eval/test_real.sh
 
 # Shell syntax.
@@ -187,7 +197,7 @@ The current regression suite covers:
 - default history save/resume of final assistant responses
 - context compaction invariants
 - tool truncation
-- edit uniqueness/mode preservation
+- edit uniqueness/mode preservation and actionable edit-failure guidance
 - `grep`/`find` noisy-directory exclusions and `/effort` command
 - trailing-newline preservation for `write`/`edit`
 - `read limit:0`

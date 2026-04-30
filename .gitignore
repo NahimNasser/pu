@@ -1,6 +1,7 @@
 agent.jsonl
 .pu-events.jsonl
 .pu-history.json
+.pu-history.json.meta
 *.jsonl.tree
 .env
 .DS_Store
