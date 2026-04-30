@@ -154,31 +154,59 @@
     <a href="https://github.com/NahimNasser/pu/blob/main/LICENSE">mit license</a>
   </footer>
 </main>
-<script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.10.0/dist/bundle/asciinema-player.min.js"></script>
 <script>
-  AsciinemaPlayer.create('demo.cast', document.getElementById('demo'), {
-    autoPlay: true,
-    loop: true,
-    controls: false,
-    fit: 'width',
-    idleTimeLimit: 1,
-    theme: 'monokai'
-  });
-
   (function () {
     var btn = document.getElementById('copy');
+    if (!btn) return;
     var cmd = 'curl -sL https://raw.githubusercontent.com/NahimNasser/pu/main/pu.sh -o pu.sh && chmod +x pu.sh\n./pu.sh';
+
+    function flash(text, ok) {
+      btn.textContent = text;
+      btn.classList.toggle('copied', ok);
+      setTimeout(function () {
+        btn.textContent = 'copy';
+        btn.classList.remove('copied');
+      }, 1500);
+    }
+
+    function legacyCopy(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (_) {}
+      document.body.removeChild(ta);
+      return ok;
+    }
+
     btn.addEventListener('click', function () {
-      navigator.clipboard.writeText(cmd).then(function () {
-        btn.textContent = 'copied';
-        btn.classList.add('copied');
-        setTimeout(function () {
-          btn.textContent = 'copy';
-          btn.classList.remove('copied');
-        }, 1500);
-      });
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(cmd).then(
+          function () { flash('copied', true); },
+          function () { flash(legacyCopy(cmd) ? 'copied' : 'press ⌘C', legacyCopy(cmd)); }
+        );
+      } else {
+        flash(legacyCopy(cmd) ? 'copied' : 'press ⌘C', legacyCopy(cmd));
+      }
     });
   })();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.10.0/dist/bundle/asciinema-player.min.js"></script>
+<script>
+  try {
+    AsciinemaPlayer.create('demo.cast', document.getElementById('demo'), {
+      autoPlay: true,
+      loop: true,
+      controls: false,
+      fit: 'width',
+      idleTimeLimit: 1,
+      theme: 'monokai'
+    });
+  } catch (e) { console.error('asciinema:', e); }
 </script>
 </body>
 </html>
