@@ -7,13 +7,13 @@ Current validation:
 ```sh
 sh -n pu.sh
 bash eval/test_real.sh
-# PASS: 84 FAIL: 0 TOTAL: 84
+# PASS: 90 FAIL: 0 TOTAL: 90
 ```
 
 Current size:
 
 ```text
-400 pu.sh
+396 pu.sh
 ```
 
 ## Recently fixed
@@ -101,6 +101,12 @@ is now reported as an API failure instead of falling through to:
 
 Authentication/key errors are treated as non-retryable. Curl/transport failures are retried and reported as transport errors instead of falling through to `Empty final response` or `Max steps`.
 
+### 6b. Empty API responses could exit the caller from inside `run_task`
+
+**Status:** fixed.
+
+After exhausting empty-response retries, `run_task` used `exit 1` instead of `return 1`. In interactive/sourced contexts this could terminate the whole shell instead of reporting failure to the caller. It now returns failure normally; regression coverage is `TC-12b`.
+
 ### 7. Saved key loading was skipped when `AGENT_MODEL` was set
 
 **Status:** fixed.
@@ -158,7 +164,7 @@ If OpenAI returns a successful but empty final response, `pu.sh` retries once wi
 
 **Status:** fixed.
 
-`edit` now requires exactly one `oldText` match. Empty `oldText` is rejected. Duplicate matches produce an error.
+`edit` now requires exactly one `oldText` match. Empty `oldText` is rejected. Duplicate/not-found matches produce actionable retry guidance, and failed tool results are shown in the UI. The internal awk readers now use a non-NUL sentinel record separator so exact matches beyond the first line/record are found on BSD/macOS awk.
 
 ### 13. `edit` used unsafe temporary path and lost executable mode
 
@@ -245,83 +251,83 @@ Use `/effort xhigh`, `/effort low`, or `/effort none`.
 ⏺ read pu.sh
 ```
 
+### 25. JSON unicode escapes were only partially decoded
+
+**Status:** fixed.
+
+`jp` previously decoded a few hardcoded escapes (`\u00fc`, curly quotes, dashes) but left most valid JSON unicode escapes literal. Tool arguments such as paths/content containing `\u00e9`, `\u263a`, or surrogate pairs could be passed incorrectly. `jp` now decodes general `\uXXXX` escapes and surrogate pairs while preserving escaped backslash-u sequences like `\\u00e9`; regression coverage is `JS-5b`.
+
+### 26. `write` was non-atomic
+
+**Status:** fixed.
+
+The `write` tool no longer writes directly to the destination with shell redirection. It now writes content to a `mktemp` file in the target directory, applies the existing file mode when overwriting or a normal umask-derived mode for new files, then `mv`s the temp file into place. Symlink paths are resolved before writing so `write` continues to update the linked target rather than replacing the symlink itself.
+
 ## Known remaining limitations / bugs to consider
 
-### 1. Targeted `awk` JSON parsing is fragile
+This section is based on direct inspection of the current `pu.sh` script, not README/docs claims. Current syntax checks pass:
 
-The helpers `jp`, `jb`, `j1st`, and `each_tool_use` are not general JSON parsers. They work for covered provider shapes but can select the wrong key/object if an unexpected response embeds matching keys in strings or changes nesting.
-
-**Possible next step:** optional `jq` fast path with `awk` fallback, or stricter shape-specific scanners.
-
-### 2. `local` is not POSIX
-
-The script uses `local` under `#!/bin/sh`. This works in common shells used as `/bin/sh` on many systems (`dash`, `bash`, BusyBox `ash`, zsh sh emulation), but it is not POSIX.
-
-**Decision:** accepted for now; README says "common sh," not strict POSIX.
-
-### 3. `~/.pu.env` parsing is intentionally tiny
-
-`~/.pu.env` is no longer shell-sourced. A small allowlist parser loads only known keys and ignores arbitrary shell lines.
-
-**Current mitigation:** first-run save uses restrictive permissions via `umask 077`, and malformed/unknown lines are ignored.
-
-**Possible next step:** more robust quote parsing if future values need spaces.
-
-### 4. Context budget is bytes/chars, not tokens
-
-`CTX_LIMIT` and `_ctxp` use `${#MSGS}`. This is approximate and can compact too early or too late.
-
-**Possible next step:** rough token estimator or provider tokenizer integration (but that adds complexity/deps).
-
-### 5. Compaction is heuristic
-
-`trim_context` scans JSON-ish objects and keeps a slice. It has some tool-result boundary handling, but complex OpenAI/Anthropic tool-turn transcripts can still be tricky.
-
-**Possible next step:** compact at explicit logical turn boundaries and validate provider-specific transcript shape after compaction.
-
-### 6. History has no provider/model metadata
-
-`.pu-history.json` / `AGENT_HISTORY` stores only the message array. Reusing history across providers can mix incompatible Anthropic/OpenAI transcript items.
-
-**Possible next step:** sidecar metadata or a wrapper object with provider/model.
-
-### 7. `@file` expansion is intentionally simple
-
-Only one simple `@path` reference is expanded. Paths with spaces and multiple refs are not handled well. It also uses direct file read rather than `AGENT_READ_MAX` range behavior.
-
-**Possible next step:** support `@{path with spaces}` and large-file guards.
-
-### 8. `grep` and `find` exclusions are intentionally small
-
-Common noisy directories are pruned, but the list is not exhaustive and may miss repo-specific generated directories.
-
-**Possible next step:** make exclusions configurable without bloating the script.
-
-### 9. Tool errors are plain text, not structured status
-
-Tool failures are returned as text such as:
-
-```text
-[exit:2]
+```sh
+sh -n pu.sh
+bash -n pu.sh
 ```
 
-The model can infer failure, but the provider does not receive a structured tool-error field.
+### 1. `#!/bin/sh` is not strict POSIX
 
-**Possible next step:** provider-specific error/status encoding where supported.
+The script advertises "common sh" and uses `#!/bin/sh`, but it uses `local` throughout (`_kill_tree`, `call_api`, `run_tool`, `trim_context`, etc.). `local` works in many common `/bin/sh` implementations (`dash`, BusyBox `ash`, bash-as-sh), but it is not POSIX and can fail on stricter shells.
 
-### 10. `edit` metadata preservation is limited
+**Possible next step:** either officially require "common sh with `local`" / switch the shebang to a known shell, or remove `local` usage.
 
-`edit` preserves file mode, but replacement via temp file + `mv` can change ownership, ACLs, xattrs, and symlink behavior.
+### 2. Targeted `awk` JSON parsing remains fragile
 
-**Possible next step:** document this more prominently or implement a more metadata-preserving strategy.
+The helpers `jp`, `jb`, `each_tool_use`, and `oa_items` are targeted string scanners, not general JSON parsers. They handle the currently expected provider shapes, including many escapes, but can still select the wrong object/key if provider response formats drift or if matching keys appear in unexpected nested objects/strings.
 
-### 11. Ctrl-C cleanup only kills direct child
+**Possible next step:** optional `jq` fast path with the current `awk` implementation as fallback, or stricter provider-shape-specific scanners.
 
-Long-running shell commands with grandchildren can survive because the script tracks only the immediate child pid.
+### 3. API keys can appear in process arguments
 
-**Possible next step:** process-group cleanup where portable.
+`call_api` passes secrets through curl headers:
 
-### 12. Provider/model defaults may be account-dependent
+```sh
+-H "x-api-key: ${ANTHROPIC_API_KEY:-}"
+-H "Authorization: Bearer ${OPENAI_API_KEY:-}"
+```
+
+On systems where process arguments are visible to other users/processes, API keys can be exposed while a request is running.
+
+**Possible next step:** use a temporary curl config/header file with restrictive permissions, stdin config, or another approach that avoids secrets in argv.
+
+### 4. `edit` metadata preservation is limited
+
+`edit` preserves the original file mode, but replacement through temp file + `mv` can still change ownership, ACLs, extended attributes, hardlink identity, and some symlink semantics.
+
+**Possible next step:** document this clearly or implement a more metadata-preserving strategy for platforms that support it.
+
+### 5. Context compaction can still fail to shrink enough
+
+`trim_context` can return the original oversized context if it cannot find enough JSON-ish objects (`n < 6`). Even after fallback, if the first retained message is huge, the compacted form can still exceed `CTX_LIMIT - AGENT_RESERVE`.
+
+**Possible next step:** add a final hard cap / emergency local summary that guarantees the returned message array is below the byte budget.
+
+### 6. Context budget is bytes/chars, not tokens
+
+`CTX_LIMIT` and `_ctxp` use `${#MSGS}`. This is an approximate byte/character budget, not a model token budget. It can compact too early or too late, especially with non-ASCII text or large JSON/tool payloads.
+
+**Possible next step:** add a conservative token estimator or provider-specific retry/compaction behavior with larger margins.
+
+### 7. Compaction boundaries are heuristic
+
+`trim_context` scans JSON-ish objects and tries to avoid starting on OpenAI reasoning/function-call/tool-output boundaries. This is still heuristic. Complex Anthropic/OpenAI tool-turn transcripts can still be malformed after compaction.
+
+**Possible next step:** compact at explicit provider-specific logical turn boundaries and validate the resulting transcript shape before sending it.
+
+### 8. Ctrl-C cleanup depends on `pgrep`
+
+`_interrupt` calls `_kill_tree`, which recursively kills descendants when `pgrep -P` is available. Without `pgrep`, or for fully detached/reparented processes, runaway descendants may survive.
+
+**Possible next step:** run tools/API calls in their own process group where available and kill the group on interrupt.
+
+### 9. Provider/model defaults may be account-dependent
 
 Defaults are currently:
 
@@ -330,28 +336,65 @@ OpenAI:    gpt-5.5
 Anthropic: claude-opus-4-7
 ```
 
-These may not be available on every account.
+These may not be available on every account, so first run can fail with a model access/not-found error.
 
-**Possible next step:** safer public defaults, model validation, or a clearer first-run warning.
+**Possible next step:** choose safer public defaults, add model validation, or improve first-run model selection.
 
-### 13. Anthropic/OpenAI effort support changes over time
+### 10. Reasoning/effort schemas can drift
 
-Effort/reasoning schemas are model- and date-sensitive. `pu.sh` uses a tiny metadata gate, not a full registry.
+`think_param`, `EFFORT_OK`, and OpenAI/Anthropic request fields are hardcoded. Effort/reasoning APIs are model- and date-sensitive; a provider schema change can produce invalid-body errors.
 
-**Possible next step:** auto-disable unsupported effort after schema errors.
+**Possible next step:** auto-disable effort after schema errors, or maintain a small model capability registry.
 
-### 14. No streaming/debug capture mode
+### 11. `bash` tool is unsandboxed
 
-When a provider returns a new response shape, debugging requires inspecting logs or adding temporary stubs.
+The `bash` tool writes model-provided commands to a temp file and executes them with `$RUNSH`. This is expected for a coding agent, but it is unsafe for untrusted prompts/context or hostile repositories.
 
-**Possible next step:** `AGENT_DEBUG_API=dir` to save request/response JSON for failed calls.
+**Possible next step:** keep `AGENT_CONFIRM=1` documented, add optional deny/allow lists, or support a sandbox/worktree mode.
+
+### 12. Debug capture can leak sensitive data
+
+`AGENT_DEBUG_API=dir` writes full request/response JSON to disk, including prompts, file contents, tool outputs, and possibly secrets copied into context.
+
+**Possible next step:** add redaction, rotation, and a warning when debug capture is enabled.
+
+### 13. Dependency story is broader than `sh + curl + awk`
+
+The script checks only `curl` and `awk`, but uses other common Unix tools: `sed`, `tr`, `dirname`, `mktemp`, `grep`, `find`, `head`, `tail`, `wc`, `cat`, `stat`, `chmod`, `mv`, `readlink`, and optionally `pgrep`, `git`, `open`/`xdg-open`.
+
+**Possible next step:** update the stated requirement to "common Unix userland" or add startup checks for less-universal tools.
+
+### 14. Tool errors are plain text, not structured status
+
+Tool failures are returned as text such as:
+
+```text
+[exit:2]
+Error: oldText not found ...
+```
+
+The model can infer failure, but the provider does not receive a structured tool-error field.
+
+**Possible next step:** provider-specific error/status encoding where supported.
+
+### 15. History compatibility is guarded by a sidecar
+
+`.pu-history.json` / `AGENT_HISTORY` stores the message array, and `save` writes a `.meta` sidecar containing provider/model. This prevents normal cross-provider resume, but the history file itself is still not self-describing if copied without its sidecar.
+
+**Possible next step:** store history as a wrapper object with provider/model/messages instead of relying on a separate `.meta` file.
+
+### 16. No `@file` expansion
+
+Tasks that mention files are sent as plain text; the model must use the `read` tool. This avoids hidden large-file reads but is less convenient than explicit `@path` inclusion.
+
+**Possible next step:** optional guarded `@{path}` expansion with `AGENT_READ_MAX`/range behavior.
 
 ## Suggested next fix order
 
-1. Optional debug request/response capture.
-2. History provider/model metadata.
-3. Better compaction boundaries and history provider metadata.
-4. `grep`/`find` exclusions for common huge directories.
-5. Optional `jq` path or stronger JSON shape parsing.
-6. Process-group cleanup on interrupt.
-7. Model registry/pricing table if the script can stay small enough.
+1. Guarantee compaction returns a context under budget.
+2. Reduce API key exposure in curl process arguments.
+3. Add an optional `jq` path or strengthen JSON parsing.
+4. Clarify shell/dependency requirements or remove non-POSIX assumptions.
+5. Add process-group cleanup where available.
+6. Add safer model defaults/model validation.
+7. Add debug redaction/rotation if `AGENT_DEBUG_API` remains.
