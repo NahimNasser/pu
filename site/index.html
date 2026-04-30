@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pu.sh — a slop cannon in 400 lines of shell</title>
+<meta name="description" content="A full coding-agent harness in 400 lines of shell. No npm. No pip. No Docker. Just curl, awk, and an API key.">
+<link rel="icon" type="image/png" href="logo.png">
+<meta property="og:title" content="pu.sh — a slop cannon in 400 lines of shell">
+<meta property="og:description" content="A full coding-agent harness in 400 lines of shell. No npm. No pip. No Docker. Just curl, awk, and an API key.">
+<meta property="og:image" content="https://pu.dev/logo.png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pu.dev/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.10.0/dist/bundle/asciinema-player.min.css">
+<style>
+  :root {
+    --bg: #0d0d0d;
+    --fg: #e6e6e6;
+    --dim: #888;
+    --accent: #a3e635;
+    --rule: #2a2a2a;
+    --pane: #161616;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  main {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 28px 24px 32px;
+  }
+  .demo {
+    width: min(calc(100vw - 32px), 960px);
+    margin: 0 auto 24px;
+    position: relative;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  /* asciinema-player overrides — make terminal blend with page */
+  .demo .ap-player { background: var(--pane); }
+  .demo .ap-terminal { padding: 8px 10px; }
+  h1 {
+    font-size: 44px;
+    font-weight: 700;
+    margin: 0 0 10px;
+    letter-spacing: -0.02em;
+    text-align: center;
+  }
+  .tagline {
+    text-align: center;
+    color: var(--fg);
+    margin: 0 0 4px;
+    font-size: 14px;
+  }
+  .tagline.dim { color: var(--dim); }
+  .tagline.quote {
+    color: var(--accent);
+    margin-top: 10px;
+    font-style: italic;
+  }
+  .install {
+    background: var(--pane);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin: 22px 0 16px;
+    position: relative;
+    overflow-x: auto;
+  }
+  .install pre {
+    margin: 0;
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--fg);
+    white-space: pre;
+  }
+  .install .prompt { color: var(--accent); user-select: none; }
+  .copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: transparent;
+    border: 1px solid var(--rule);
+    color: var(--dim);
+    font-family: inherit;
+    font-size: 11px;
+    padding: 3px 7px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .copy-btn:hover { color: var(--fg); border-color: var(--dim); }
+  .copy-btn.copied { color: var(--accent); border-color: var(--accent); }
+  .stats {
+    text-align: center;
+    color: var(--dim);
+    margin: 16px 0 18px;
+    font-size: 13px;
+  }
+  .stats strong { color: var(--fg); font-weight: 600; }
+  footer {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--rule);
+    text-align: center;
+    color: var(--dim);
+    font-size: 13px;
+  }
+  footer a {
+    color: var(--fg);
+    text-decoration: none;
+    margin: 0 6px;
+  }
+  footer a:hover { color: var(--accent); }
+  footer .sep { color: var(--rule); }
+  @media (max-width: 520px) {
+    main { padding: 20px 16px 24px; }
+    h1 { font-size: 34px; }
+    body { font-size: 13px; }
+    .install pre { font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div id="demo" class="demo"></div>
+
+  <h1>pu.sh</h1>
+  <p class="tagline">a full coding-agent harness in 400 lines of shell.</p>
+  <p class="tagline dim">pronounced exactly how you think.</p>
+  <p class="tagline quote">&gt; a slop cannon small enough to fit your pocket.</p>
+
+  <div class="install">
+    <button class="copy-btn" id="copy" aria-label="Copy install command">copy</button>
+    <pre id="install-cmd"><span class="prompt">$ </span>curl -sL https://raw.githubusercontent.com/NahimNasser/pu/main/pu.sh -o pu.sh &amp;&amp; chmod +x pu.sh
+<span class="prompt">$ </span>./pu.sh</pre>
+  </div>
+
+  <p class="stats">no npm <span class="sep">·</span> no pip <span class="sep">·</span> no docker <span class="sep">·</span> just <strong>curl</strong>, <strong>awk</strong>, and an api key</p>
+
+  <footer>
+    <a href="https://github.com/NahimNasser/pu">github</a>
+    <span class="sep">·</span>
+    <a href="https://github.com/NahimNasser/pu/blob/main/docs/how-pu-works.md">docs</a>
+    <span class="sep">·</span>
+    <a href="https://github.com/NahimNasser/pu/blob/main/LICENSE">mit license</a>
+  </footer>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.10.0/dist/bundle/asciinema-player.min.js"></script>
+<script>
+  AsciinemaPlayer.create('demo.cast', document.getElementById('demo'), {
+    autoPlay: true,
+    loop: true,
+    controls: false,
+    fit: 'width',
+    idleTimeLimit: 1,
+    theme: 'monokai'
+  });
+
+  (function () {
+    var btn = document.getElementById('copy');
+    var cmd = 'curl -sL https://raw.githubusercontent.com/NahimNasser/pu/main/pu.sh -o pu.sh && chmod +x pu.sh\n./pu.sh';
+    btn.addEventListener('click', function () {
+      navigator.clipboard.writeText(cmd).then(function () {
+        btn.textContent = 'copied';
+        btn.classList.add('copied');
+        setTimeout(function () {
+          btn.textContent = 'copy';
+          btn.classList.remove('copied');
+        }, 1500);
+      });
+    });
+  })();
+</script>
+</body>
+</html>
