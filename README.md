@@ -7,7 +7,7 @@
 <p align="center"><em>Finally, a slop cannon small enough to fit in your pocket.</em></p>
 
 ```sh
-curl -sL https://raw.githubusercontent.com/NahimNasser/pu/main/pu.sh -o pu.sh && chmod +x pu.sh
+curl -sL pu.dev/pu.sh -o pu.sh && chmod +x pu.sh
 ./pu.sh
 ```
 
@@ -17,7 +17,7 @@ That's the entire install. No npm. No pip. No Docker. No runtime. One shell file
 
 ```sh
 # Zero install. Literally.
-curl -sL https://raw.githubusercontent.com/NahimNasser/pu/main/pu.sh > pu.sh && chmod +x pu.sh
+curl -sL pu.dev/pu.sh > pu.sh && chmod +x pu.sh
 
 # First run walks you through provider, key, model, and effort.
 ./pu.sh
