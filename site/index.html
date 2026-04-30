@@ -140,7 +140,7 @@
 
   <div class="install">
     <button class="copy-btn" id="copy" aria-label="Copy install command">copy</button>
-    <pre id="install-cmd"><span class="prompt">$ </span>curl -sL https://raw.githubusercontent.com/NahimNasser/pu/main/pu.sh -o pu.sh &amp;&amp; chmod +x pu.sh
+    <pre id="install-cmd"><span class="prompt">$ </span>curl -sL pu.dev/pu.sh -o pu.sh &amp;&amp; chmod +x pu.sh
 <span class="prompt">$ </span>./pu.sh</pre>
   </div>
 
@@ -158,7 +158,7 @@
   (function () {
     var btn = document.getElementById('copy');
     if (!btn) return;
-    var cmd = 'curl -sL https://raw.githubusercontent.com/NahimNasser/pu/main/pu.sh -o pu.sh && chmod +x pu.sh\n./pu.sh';
+    var cmd = 'curl -sL pu.dev/pu.sh -o pu.sh && chmod +x pu.sh\n./pu.sh';
 
     function flash(text, ok) {
       btn.textContent = text;
