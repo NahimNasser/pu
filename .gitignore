@@ -5,3 +5,4 @@ agent.jsonl
 *.jsonl.tree
 .env
 .DS_Store
+.claude/
