@@ -1,0 +1,212 @@
+[
+  {
+    "role": "user",
+    "content": "Implement the top compaction improvements in pu.sh. Constraints: keep it portable shell, no new dependencies, use precise edits, preserve coding-agent state, and run the tests."
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "I will inspect the compaction recommendations and current trim_context implementation."
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_read_compaction",
+        "name": "read",
+        "input": {
+          "path": "compaction-improvements.md",
+          "offset": 0,
+          "limit": 260
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "tool_result",
+        "tool_use_id": "toolu_read_compaction",
+        "content": "# Compaction reliability ideas for pu.sh\nTop implementation picks:\n1. Hard under-budget guarantee.\n2. Structured memory-card summary prompt.\n3. Dynamic recent-tail budget.\n4. Useful local fallback memory.\n5. Minimal validation plus compaction logging."
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_read_pu",
+        "name": "read",
+        "input": {
+          "path": "pu.sh",
+          "offset": 258,
+          "limit": 100
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "tool_result",
+        "tool_use_id": "toolu_read_pu",
+        "content": "trim_context(){ local m=... cap=$((CTX_LIMIT-AGENT_RESERVE)) ... Summarization failed; using local compaction note ... new=$(printf '[%s,%s,%s]' \"$a\" \"$s\" \"$r\"); [ ${#new} -gt \"$cap\" ] && new=$(printf '[%s,%s]' \"$a\" \"$s\"); }"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_edit_pu",
+        "name": "edit",
+        "input": {
+          "path": "pu.sh",
+          "oldText": "trim_context(){ local m=\"$1\" f=\"${2:-}\" cap=$((CTX_LIMIT-AGENT_RESERVE))",
+          "newText": "_ctx_valid(){ ... }\n_ctx_local_memory(){ ... }\ntrim_context(){ local m=\"$1\" f=\"${2:-}\" cap=$((CTX_LIMIT-AGENT_RESERVE))"
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "tool_result",
+        "tool_use_id": "toolu_edit_pu",
+        "content": "Edited pu.sh"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_syntax",
+        "name": "bash",
+        "input": {
+          "command": "sh -n pu.sh && printf 'syntax ok\\n'"
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "tool_result",
+        "tool_use_id": "toolu_syntax",
+        "content": "syntax ok"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_tests_fail",
+        "name": "bash",
+        "input": {
+          "command": "bash eval/test_real.sh"
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "tool_result",
+        "tool_use_id": "toolu_tests_fail",
+        "content": "TC-9 local fallback didn't fire: expected compacted locally marker. Also saw integer expression expected because kb was not initialized from AGENT_KEEP_RECENT.\n[exit:1]"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_fix_pu",
+        "name": "edit",
+        "input": {
+          "path": "pu.sh",
+          "oldText": "local m=\"$1\" f=\"${2:-}\" cap=$((CTX_LIMIT-AGENT_RESERVE)) o n c a r mid p req res s new kb half mode localnote",
+          "newText": "local m=\"$1\" f=\"${2:-}\" cap=$((CTX_LIMIT-AGENT_RESERVE)) o n c a r mid p req res s new kb=$AGENT_KEEP_RECENT half mode localnote"
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "tool_result",
+        "tool_use_id": "toolu_fix_pu",
+        "content": "Edited pu.sh"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_add_tests",
+        "name": "edit",
+        "input": {
+          "path": "eval/test_real.sh",
+          "oldText": "# Edge case: API returns empty TX",
+          "newText": "# Edge case: API returns empty TX\n# Additional hard-budget compaction tests"
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "tool_result",
+        "tool_use_id": "toolu_add_tests",
+        "content": "Edited eval/test_real.sh"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_tests_pass",
+        "name": "bash",
+        "input": {
+          "command": "sh -n pu.sh && bash eval/test_real.sh"
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "tool_result",
+        "tool_use_id": "toolu_tests_pass",
+        "content": "PASS: 94 FAIL: 0 TOTAL: 94"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": "Implemented hard under-budget compaction, structured memory card prompting, dynamic recent-tail sizing, useful local fallback memory, and compaction logging."
+  },
+  {
+    "role": "user",
+    "content": "Add a real fixture-based compaction test so the compaction tests are less toy. Make sure the fixture preserves pu.sh, compaction-improvements.md, eval/test_real.sh, AGENT_KEEP_RECENT, and the [exit:1] failure fact after local fallback."
+  }
+]

@@ -16,50 +16,22 @@ MAX_STEPS="${AGENT_MAX_STEPS:-100}" MAX_TOKENS="${AGENT_MAX_TOKENS:-4096}" AGENT
 CTX_LIMIT="${AGENT_CONTEXT_LIMIT:-400000}" VERBOSE="${AGENT_VERBOSE:-1}" THINKING="${AGENT_THINKING:-}" EFFORT="${AGENT_EFFORT:-${AGENT_THINKING:-medium}}" EFFORT_OK=0
 case "$PROVIDER:$MODEL" in openai:gpt-5.5*) EFFORT_OK=1;; anthropic:claude-opus-4-7*) [ -z "${AGENT_CONTEXT_LIMIT:-}" ] && CTX_LIMIT=272000; EFFORT_OK=1;; anthropic:claude-opus-4-6*|anthropic:claude-sonnet-4-6*|anthropic:claude-opus-4-5*) EFFORT_OK=1;; esac
 PIPE=0 COST=0 INTERACTIVE=0 MSGS=""
-SYSTEM="${AGENT_SYSTEM:-You are an expert coding assistant. You help users by reading files, executing commands, editing code, and writing new files.
-Available tools:
-- read: Read file contents. Use offset/limit for large files.
-- bash: Run shell commands. Use this only for actions not covered by the dedicated tools below.
-- edit: Make precise file edits with exact text replacement via oldText/newText
-- write: Create or overwrite files. Automatically creates parent directories.
-- grep: Search file contents for patterns
-- find: Find files by glob pattern
-- ls: List directory contents
-Guidelines:
-- Prefer the grep/find/ls tools over bash for file exploration. Faster and no need to cd.
-- Working directory is already set ($(pwd)); do not cd inside bash commands.
-- Combine related searches into one grep call using alternation (pat1|pat2|pat3) instead of issuing each as a separate call.
-- Use read to examine files instead of cat or sed.
-- Use write only for new files or complete rewrites. Never use bash with cat/heredoc/echo to create files.
-- Use edit for precise changes. oldText must match exactly once in the current file. Read the exact target block if unsure. Keep oldText minimal but unique; for nearby changes use one larger block. If edit fails, read surrounding lines before retrying; do not retry the same oldText. Do not use bash/python to edit files unless edit/write cannot express the change.
-- Before tool calls, briefly say what you are checking or changing.
-- Be concise in your responses.
-- Show file paths clearly when working with files.
+SYSTEM="${AGENT_SYSTEM:-You are an expert coding assistant. You can read, write, edit, grep, find, ls, and run bash.
+Tools: read(path,offset,limit); bash(command); edit(path,oldText,newText); write(path,content); grep(pattern,path); find(path,name); ls(path).
+Guidelines: prefer grep/find/ls over bash for exploration; working directory is $(pwd), do not cd in bash commands; combine related grep searches with alternation.
+Use read instead of cat/sed; write only for new files or complete rewrites; edit only with exact unique oldText, reading surrounding lines after failures and never retrying the same failed oldText.
+Before tool calls briefly say what you are checking/changing; be concise; show file paths clearly.
 Current date: $(date +%Y-%m-%d)
 Current working directory: $(pwd)
-Your source code is at $(cd "$(dirname "$0")" && pwd)/$(basename "$0"). Use the read tool to inspect it if asked about your own capabilities or configuration.}"
-while [ $# -gt 0 ]; do case "$1" in -h|--help) cat<<'HELP'
-pu.sh — portable agentic harness (sh+curl, no deps)
-Usage: ./pu.sh "task" | ./pu.sh (interactive) | --pipe | --cost | -v
-Env: ANTHROPIC_API_KEY OPENAI_API_KEY AGENT_MODEL AGENT_PROVIDER AGENT_SYSTEM
- AGENT_MAX_STEPS AGENT_MAX_TOKENS AGENT_LOG AGENT_CONFIRM AGENT_VERBOSE AGENT_CONTEXT_LIMIT
- AGENT_RESERVE AGENT_TOOL_TRUNC AGENT_READ_MAX AGENT_HISTORY AGENT_THINKING/AGENT_EFFORT AGENT_PRICE_* ~/.pu.env
-7 tools, multi-turn, retries, JSONL logging, pipe mode, !command
-Auto-compaction summarizes older turns when context fills; /compact [focus] runs it manually.
-HELP
-exit 0;;-v|--version)echo "pu.sh 1.0.0";exit 0;;--pipe|-p)PIPE=1;shift;;--cost)COST=1;shift;;-i)INTERACTIVE=1;shift;;-n|--no-interactive)INTERACTIVE=-1;shift;;*)break;;esac;done
+Your source code is at $(cd "$(dirname "$0")" && pwd)/$(basename "$0"). Use read to inspect it if asked about your capabilities/configuration.}"
+while [ $# -gt 0 ]; do case "$1" in -h|--help) printf '%s\n' 'pu.sh — portable agentic harness (sh+curl, no deps)' 'Usage: ./pu.sh "task" | ./pu.sh (interactive) | --pipe | --cost | -v' 'Env: ANTHROPIC_API_KEY OPENAI_API_KEY AGENT_MODEL AGENT_PROVIDER AGENT_SYSTEM AGENT_MAX_STEPS AGENT_MAX_TOKENS AGENT_LOG AGENT_CONFIRM AGENT_VERBOSE AGENT_CONTEXT_LIMIT AGENT_RESERVE AGENT_TOOL_TRUNC AGENT_READ_MAX AGENT_HISTORY AGENT_THINKING/AGENT_EFFORT AGENT_PRICE_* ~/.pu.env' '7 tools, multi-turn, retries, JSONL logging, pipe mode, !command; auto-compaction summarizes older turns; /compact [focus] runs it manually.'; exit 0;;-v|--version)echo "pu.sh 1.0.0";exit 0;;--pipe|-p)PIPE=1;shift;;--cost)COST=1;shift;;-i)INTERACTIVE=1;shift;;-n|--no-interactive)INTERACTIVE=-1;shift;;*)break;;esac;done
 for _dep in curl awk;do command -v $_dep >/dev/null 2>&1||{ printf '\033[31m[!] %s not found\033[0m\n' "$_dep" >&2;exit 1;};done
 RUNSH=$(command -v bash 2>/dev/null||echo sh)
 jp(){
   printf '%s' "$1" | awk -v k="$2" '
   function hx(c){c=tolower(c);return index("0123456789abcdef",c)-1}
   function h4(s){return hx(substr(s,1,1))*4096+hx(substr(s,2,1))*256+hx(substr(s,3,1))*16+hx(substr(s,4,1))}
-  function u8(n){
-    if(n<128)return sprintf("%c",n)
-    if(n<2048)return sprintf("%c%c",192+int(n/64),128+n%64)
-    if(n<65536)return sprintf("%c%c%c",224+int(n/4096),128+int(n/64)%64,128+n%64)
-    return sprintf("%c%c%c%c",240+int(n/262144),128+int(n/4096)%64,128+int(n/64)%64,128+n%64)
-  }
+  function u8(n){if(n<128)return sprintf("%c",n);if(n<2048)return sprintf("%c%c",192+int(n/64),128+n%64);if(n<65536)return sprintf("%c%c%c",224+int(n/4096),128+int(n/64)%64,128+n%64);return sprintf("%c%c%c%c",240+int(n/262144),128+int(n/4096)%64,128+int(n/64)%64,128+n%64)}
   function uniu(s, r,p,h,n,n2){r="";while((p=index(s,"\\u"))>0&&length(s)>=p+5){h=substr(s,p+2,4);if(h!~/^[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]$/){r=r substr(s,1,p+1);s=substr(s,p+2);continue};r=r substr(s,1,p-1);n=h4(h);if(n>=55296&&n<=56319&&substr(s,p+6,2)=="\\u"){h=substr(s,p+8,4);if(h~/^[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]$/){n2=h4(h);if(n2>=56320&&n2<=57343){n=65536+(n-55296)*1024+(n2-56320);s=substr(s,p+12);r=r u8(n);continue}}};r=r u8(n);s=substr(s,p+6)};return r s}
   BEGIN{RS="\001"}{
     tgt="\"" k "\"" ":"
@@ -263,33 +235,61 @@ _fmtk(){ awk -v n="$1" 'BEGIN{if(n>=1000000)printf "%.1fM",n/1000000;else if(n>=
 _ctxp(){ awk -v n="${#MSGS}" -v c="$CTX_LIMIT" 'BEGIN{printf "%.1f%%/%dk",(c?100*n/c:0),c/1000}';}
 _branch(){ command -v git >/dev/null 2>&1 && git branch --show-current 2>/dev/null | awk 'NF{printf " (%s)",$0}';}
 _status(){ local d; case "$PWD" in "$HOME"/*) d="~/${PWD#"$HOME"/}";; *) d="$PWD";; esac; printf '%s%s ↑%s ↓%s' "$d" "$(_branch)" "$(_fmtk "$TOKEN_IN")" "$(_fmtk "$TOKEN_OUT")"; [ "$COST" = 1 ] && printf ' $%.3f' "$COST_USD"; printf ' %s (%s) %s' "$(_ctxp)" "$PROVIDER" "$MODEL"; [ "$EFFORT_OK" = 1 ] && printf ' • %s' "$EFFORT";}
-trim_context(){ local m="$1" f="${2:-}" cap=$((CTX_LIMIT-AGENT_RESERVE)) o n c h a r mid p req res s new kb=$AGENT_KEEP_RECENT
-  [ -z "$f" ] && [ ${#m} -le "$cap" ] && { printf '%s' "$m"; return; }
+_ctx_entries(){ printf '%s' "$1" | awk '
+  BEGIN{RS="\001"; max=12000; outmax=4000; pending=""; ptype=""}
+  function balanced(s, i,c,q,e,d){d=0;q=0;e=0;for(i=1;i<=length(s);i++){c=substr(s,i,1);if(e){e=0;continue};if(c=="\\"){if(q)e=1;continue};if(c=="\""){q=!q;continue};if(q)continue;if(c=="{")d++;else if(c=="}")d--}return d==0&&!q}
+  function callid(s, t){if(match(s,/"call_id"[ \t]*:[ \t]*"[^"]+"/)){t=substr(s,RSTART,RLENGTH);sub(/^.*"call_id"[ \t]*:[ \t]*"/,"",t);sub(/"$/,"",t);return t}return "omitted"}
+  function outstub(s){return "{\"type\":\"function_call_output\",\"call_id\":\"" callid(s) "\",\"output\":\"[large or malformed tool output omitted during compaction: " length(s) " chars]\"}"}
+  function msgstub(s){return "{\"role\":\"user\",\"content\":\"[large or malformed message omitted during compaction: " length(s) " chars]\"}"}
+  function emit(e){if(e~/^\{[ \t]*"type"[ \t]*:[ \t]*"function_call_output"/){if(length(e)<=outmax&&balanced(e))print e;else print outstub(e)}else if(e~/^\{[ \t]*"(role|id|type)"/){if(length(e)<=max&&balanced(e))print e;else if(e~/^\{[ \t]*"role"/)print msgstub(e)}}
+  {data=$0;sub(/^\[/,"",data);sub(/\]$/,"",data);n=split(data,a,/\},\{/);for(i=1;i<=n;i++){raw=a[i]
+    if(pending!=""){pending=pending "},{" raw; cand=pending; if(i<n)cand=cand "}"; if(length(cand)>max){if(ptype=="role")print msgstub(cand); pending=""; ptype=""; continue}; if(balanced(cand)){print cand; pending=""; ptype=""}; continue}
+    e=(i>1?"{":"") raw; cand=e; if(i<n)cand=cand "}"; if(cand~/^\{[ \t]*"type"[ \t]*:[ \t]*"function_call_output"/){if(length(cand)<=outmax&&balanced(cand))print cand;else print outstub(cand); continue}
+    if(cand~/^\{[ \t]*"(role|id|type)"/ && !balanced(cand) && length(cand)<=max){pending=e; ptype=(cand~/^\{[ \t]*"role"/?"role":"other"); continue}; emit(cand)}}'
+}
+_ctx_filter_openai_pairs(){ printf '%s\n' "$1" | awk '
+  function callid(s, t){if(match(s,/"call_id"[ \t]*:[ \t]*"[^"]+"/)){t=substr(s,RSTART,RLENGTH);sub(/^.*"call_id"[ \t]*:[ \t]*"/,"",t);sub(/"$/,"",t);return t}return ""}
+  {id=callid($0); if($0~/^\{.*"type"[ \t]*:[ \t]*"function_call"/ && $0!~/^\{.*"type"[ \t]*:[ \t]*"function_call_output"/){if(id!="")seen[id]=1; print; next}; if($0~/^\{.*"type"[ \t]*:[ \t]*"function_call_output"/){if(id!="" && seen[id])print; next}; print}' ; }
+_ctx_valid(){ local x="$1" cap="$2"; case "$x" in \[*\]) ;; *) return 1;; esac; [ ${#x} -le "$cap" ] || return 1; case "$x" in *',,'*|'[,'*|*',]'*) return 1;; esac; return 0; }
+_ctx_local_memory(){ local mid="$1" f="${2:-}"; { [ -n "$f" ] && printf 'Focus: %s\n' "$f"; printf '%s\n' "$mid" | awk 'BEGIN{print "Goal:";u=0;print "User constraints/directives:"}/"role":"user"/ && u<8 {s=$0;gsub(/\\n/," ",s);gsub(/\\"/,"\"",s);if(length(s)>260)s=substr(s,1,260)"...";print "- " s;u++}END{print "Files read:"}'
+  printf '%s\n' "$mid" | grep -Eo '"path":"[^"]+"' 2>/dev/null | sed 's/^"path":"/- /;s/"$//' | awk '!seen[$0]++' | head -20; printf 'Files changed:\n'; printf '%s\n' "$mid" | grep -E '"name":"(write|edit)"|Wrote to |Edited ' 2>/dev/null | head -20 | sed 's/^/- /'
+  printf 'Commands run:\n'; printf '%s\n' "$mid" | grep -Eo '"command":"[^"]+"' 2>/dev/null | sed 's/^"command":"/- /;s/"$//' | head -20; printf 'Errors/failures:\n'; printf '%s\n' "$mid" | grep -E 'Error:|\[exit:[0-9]+\]|\[denied\]|failed|Failed' 2>/dev/null | head -30 | sed 's/^/- /'
+  printf 'Decisions made:\n- See retained recent transcript for latest decisions.\nImportant snippets/facts:\n- Older bulky tool output may have been omitted; re-read files from disk as needed.\nOpen TODOs / next steps:\n- Continue from the latest retained user request and recent transcript.\n'; } | head -120; }
+_ctx_last_resort(){ local cap="$1" f="${2:-}" msg x; msg="[Earlier context was compacted locally due to size.${f:+ Focus: $f.} Continue from the latest user request.]"; x='[{"role":"user","content":"'$(json_escape "$msg")'"}]'; [ ${#x} -le "$cap" ] && printf '%s' "$x" || printf '[]'; }
+_ctx_tail_start(){ printf '%s\n' "$1" | awk -v k="$2" '{a[NR]=$0;l[NR]=length($0)}END{s=0;for(i=NR;i>1;i--){s+=l[i];if(s>k)break}print i+1}'; }
+_ctx_adjust_start(){ local o="$1" n="$2" c="$3" h guard=0; while :; do h=$(printf '%s\n' "$o" | sed -n "${c}p"); case "$h" in *reasoning*) break;; *tool_result*|*function_call_output*|*'"type":"function_call"'*) c=$((c-1));; *) break;; esac; guard=$((guard+1)); [ "$c" -le 2 ] || [ "$guard" -gt 20 ] && break; done; [ "$c" -lt 2 ] && c=$((n-2)); printf '%s' "$c"; }
+_ctx_sanitize_openai(){ local m="$1" cap="$2" o f new; [ "$PROVIDER" = openai ] || { printf '%s' "$m"; return; }; case "$m" in *'"type":"function_call_output"'*|*'"type"'*'"function_call_output"'*) ;; *) printf '%s' "$m"; return;; esac
+  o=$(_ctx_entries "$m"); f=$(_ctx_filter_openai_pairs "$o"); [ "$f" = "$o" ] && { printf '%s' "$m"; return; }
+  new=$(printf '[%s]' "$(printf '%s\n' "$f" | tr '\n' ',' | sed 's/,$//')"); if _ctx_valid "$new" "$cap"; then log 0 compact "old=${#m} new=${#new} cap=$cap mode=sanitize-openai-pairs"; printf '%s' "$new"; else printf '%s' "$m"; fi; }
+trim_context(){ local m="$1" f="${2:-}" cap=$((CTX_LIMIT-AGENT_RESERVE)) o n c a r mid p req res s new kb=$AGENT_KEEP_RECENT half mode localnote
+  [ -z "$f" ] && [ ${#m} -le "$cap" ] && { _ctx_sanitize_openai "$m" "$cap"; return; }
   info "Compacting (${#m}b > ${cap}b)${f:+ focus: $f}"
-  o=$(printf '%s' "$m" | awk 'BEGIN{RS="\001"}{d=0;q=0;e=0;o="";for(i=1;i<=length($0);i++){c=substr($0,i,1)
-    if(d>0&&(q||c!~/[ \t\r\n]/))o=o c; if(e){e=0;continue}; if(c=="\\"){if(q)e=1;continue}; if(c=="\""){q=!q;continue}; if(q)continue
-    if(c=="{"){if(d==0)o="{";d++}else if(c=="}"){d--;if(d==0){print o;o=""}}}}')
-  n=$(printf '%s\n' "$o" | wc -l | tr -d ' '); [ "$n" -lt 6 ] && { printf '%s' "$m"; return; }
-  c=$(printf '%s\n' "$o" | awk -v k="$kb" '{a[NR]=$0;l[NR]=length($0)}END{s=0;for(i=NR;i>1;i--){s+=l[i];if(s>k)break}print i+1}')
-  while :; do h=$(printf '%s\n' "$o" | sed -n "${c}p"); case "$h" in *reasoning*) break;; *tool_result*|*function_call_output*|*'"type":"function_call"'*) c=$((c-1));; *) break;; esac; done
-  [ "$c" -lt 2 ] && { c=$((n-2)); }
+  o=$(_ctx_entries "$m"); [ "$PROVIDER" = openai ] && o=$(_ctx_filter_openai_pairs "$o")
+  n=$(printf '%s\n' "$o" | wc -l | tr -d ' '); [ "$n" -lt 6 ] && { [ ${#m} -le "$cap" ] && printf '%s' "$m" || _ctx_last_resort "$cap" "$f"; return; }
+  half=$((cap/2)); [ "$kb" -gt "$half" ] && kb=$half; [ "$kb" -lt 2000 ] && kb=2000
+  c=$(_ctx_tail_start "$o" "$kb"); c=$(_ctx_adjust_start "$o" "$n" "$c")
   a=$(printf '%s\n' "$o" | sed -n 1p)
-  r=$(printf '%s\n' "$o" | sed -n "${c},${n}p" | tr '\n' ',' | sed 's/,$//')
-  mid=$(printf '%s\n' "$o" | sed -n "2,$((c-1))p" | awk '{if(length($0)>4000)print "[large transcript entry omitted: "length($0)" chars]";else print}' | tail -120)
-  [ -z "$mid" ] && { mid="[older transcript omitted]"; }
-  p="${f:+Focus: $f. }Summarize this transcript in under 500 words, preserving files read, errors hit, code changes, decisions made. Do not call tools.\n$mid"
+  mid=$(printf '%s\n' "$o" | sed -n "2,$((c-1))p" | awk '{if(length($0)>4000)print "[large transcript entry omitted: "length($0)" chars]";else print}' | tail -160)
+  [ -z "$mid" ] && mid="[older transcript omitted]"
+  p="${f:+Focus: $f. }Summarize the earlier transcript into this exact compact memory card. Be concise. Preserve actionable coding-agent state: user intent, constraints, files touched, edits, errors, decisions, and next steps. Prefer paths/ranges over copied bulk. Do not call tools.\n\nGoal:\nUser constraints/directives:\nFiles read:\nFiles changed:\nCommands run:\nErrors/failures:\nDecisions made:\nImportant snippets/facts:\nOpen TODOs / next steps:\n\nTranscript/facts:\n$mid"
   req='[{"role":"user","content":"'$(json_escape "$p")'"}]'
   res=$(call_api "$req"); parse_response "$res"
-  [ -z "$TX" ] && { err "Summarization failed; using local compaction note"; TX="Older conversation compacted locally after summarization failed; recent transcript retained."; }
-  s='{"role":"user","content":"[Earlier compacted: '$(json_escape "$TX")']"}'
-  new=$(printf '[%s,%s,%s]' "$a" "$s" "$r"); [ ${#new} -gt "$cap" ] && new=$(printf '[%s,%s]' "$a" "$s"); printf '%s' "$new";}
-load_context(){ local dir; dir=$(pwd); local ctx=""
-  while [ "$dir" != "/" ]; do
-    for f in AGENTS.md CLAUDE.md; do [ -f "$dir/$f" ] && ctx="$ctx
-$(cat "$dir/$f")" || true; done; dir=$(dirname "$dir"); done
-  [ -f "$HOME/.pi/agent/AGENTS.md" ] && ctx="$(cat "$HOME/.pi/agent/AGENTS.md")
-$ctx" || true
-  [ -n "$ctx" ] && { info "Loaded context files"; SYSTEM="$SYSTEM
+  if [ -z "$TX" ]; then err "Summarization failed; using local compaction memory"; TX=$(_ctx_local_memory "$mid" "$f"); mode=local; else mode=normal; fi
+  if [ "$mode" = local ]; then s='{"role":"user","content":"[Earlier compacted locally:\n'$(json_escape "$TX")']"}'; else s='{"role":"user","content":"[Earlier compacted memory:\n'$(json_escape "$TX")']"}'; fi
+  while :; do
+    c=$(_ctx_tail_start "$o" "$kb"); c=$(_ctx_adjust_start "$o" "$n" "$c")
+    r=$(printf '%s\n' "$o" | sed -n "${c},${n}p" | tr '\n' ',' | sed 's/,$//')
+    new=$(printf '[%s,%s,%s]' "$a" "$s" "$r"); if _ctx_valid "$new" "$cap"; then log 0 compact "old=${#m} new=${#new} cap=$cap mode=$mode tail=$kb"; printf '%s' "$new"; return; fi
+    [ "$kb" -le 2000 ] && break; kb=$((kb/2)); [ "$kb" -lt 2000 ] && kb=2000
+  done
+  if [ "$mode" = local ]; then localnote=$(printf '%s\n' "$o" | sed -n "2,${n}p" | awk '{if(length($0)>4000)print "[large transcript entry omitted: "length($0)" chars]";else print}' | tail -160); TX=$(_ctx_local_memory "$localnote" "$f"); s='{"role":"user","content":"[Earlier compacted locally:\n'$(json_escape "$TX")']"}'; fi
+  new=$(printf '[%s,%s]' "$a" "$s"); if _ctx_valid "$new" "$cap"; then log 0 compact "old=${#m} new=${#new} cap=$cap mode=${mode}-no-tail"; printf '%s' "$new"; return; fi
+  localnote=$(printf '%s\n' "$o" | sed -n "2,${n}p" | awk '{if(length($0)>4000)print "[large transcript entry omitted: "length($0)" chars]";else print}' | tail -160); localnote=$(_ctx_local_memory "$localnote" "$f"); s='{"role":"user","content":"[Earlier compacted locally:\n'$(json_escape "$localnote")']"}'
+  new=$(printf '[%s]' "$s"); if _ctx_valid "$new" "$cap"; then log 0 compact "old=${#m} new=${#new} cap=$cap mode=emergency"; printf '%s' "$new"; return; fi
+  new=$(_ctx_last_resort "$cap" "$f"); log 0 compact "old=${#m} new=${#new} cap=$cap mode=last-resort"; printf '%s' "$new";}
+load_context(){ local dir ctx f; dir=$(pwd); ctx=""; while [ "$dir" != "/" ]; do for f in AGENTS.md CLAUDE.md; do [ -f "$dir/$f" ] && ctx="$ctx
+$(cat "$dir/$f")" || true; done; dir=$(dirname "$dir"); done; [ -f "$HOME/.pi/agent/AGENTS.md" ] && ctx="$(cat "$HOME/.pi/agent/AGENTS.md")
+$ctx" || true; [ -n "$ctx" ] && { info "Loaded context files"; SYSTEM="$SYSTEM
 $ctx"; } || true;}
 run_task(){ _STATE=busy; local task="$1"
   case "$task" in '!'*) local r; "$RUNSH" -c "${task#!}" 2>&1 & _CHILD=$!; wait "$_CHILD" || r=$?; _CHILD=0; [ "$_STATE" = idle ] && return 130; return "${r:-0}";; esac
@@ -356,14 +356,9 @@ EOF
   info "stopped · $(_status)"
   log "$step" max_steps "Limit"; return 1; }
 _tpl(){ for d in .pi/prompts "$HOME/.pi/agent/prompts"; do [ -f "$d/$1.md" ] && { cat "$d/$1.md"; return; }; done; echo "$1";}
-_skill(){ for d in .pi/skills .agents/skills "$HOME/.pi/agent/skills" "$HOME/.agents/skills"; do
-  [ -f "$d/$1/SKILL.md" ] && { info "Loaded skill: $1"; SYSTEM="$SYSTEM
+_skill(){ for d in .pi/skills .agents/skills "$HOME/.pi/agent/skills" "$HOME/.agents/skills"; do [ -f "$d/$1/SKILL.md" ] && { info "Loaded skill: $1"; SYSTEM="$SYSTEM
 $(cat "$d/$1/SKILL.md")"; return; }; done; err "Skill not found: $1";}
-_export(){ local out="${1:-session.md}"; printf '# Session Export\n\n' > "$out"
-  [ -f "$LOG" ] && while IFS= read -r line; do local t; t=$(jp "$line" t); local c; c=$(jp "$line" c)
-    case "$t" in start) printf '## Task\n%s\n\n' "$c";; tool_call) printf '### Tool: %s\n' "$c";;
-      tool_result) printf '```\n%s\n```\n\n' "$c";; response) printf '## Response\n%s\n\n' "$c";; esac
-  done < "$LOG" >> "$out"; info "Exported to $out";}
+_export(){ local out="${1:-session.md}"; printf '# Session Export\n\n' > "$out"; [ -f "$LOG" ] && while IFS= read -r line; do local t; t=$(jp "$line" t); local c; c=$(jp "$line" c); case "$t" in start) printf '## Task\n%s\n\n' "$c";; tool_call) printf '### Tool: %s\n' "$c";; tool_result) printf '```\n%s\n```\n\n' "$c";; response) printf '## Response\n%s\n\n' "$c";; esac; done < "$LOG" >> "$out"; info "Exported to $out";}
 _sq(){ printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")";}
 _have_key(){ case "$PROVIDER" in anthropic) [ -n "${ANTHROPIC_API_KEY:-}" ];; openai) [ -n "${OPENAI_API_KEY:-}" ];; *) return 2;; esac;}
 _ensure_key(){ _have_key || { [ -t 0 ] && _setup || { err "No API key. Set ANTHROPIC_API_KEY or OPENAI_API_KEY (https://console.anthropic.com/settings/keys | https://platform.openai.com/api-keys)"; return 1; }; }; }

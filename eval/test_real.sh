@@ -315,6 +315,13 @@ PRETTY='[{"role":"user","content":"task"},{
 },{"role":"user","content":"old2"},{"role":"assistant","content":"old3"},{"role":"user","content":"old4"},{"role":"assistant","content":"old5"},{"role":"user","content":"done"}]'
 OUT=$(trim_context "$PRETTY" "force")
 valid_json "$OUT" && pass "TC-8d" "trim_context keeps pretty/multiline entries whole" || fail "TC-8d" "pretty entry compaction invalid" "out=$OUT"
+SEP_PAYLOAD=$(awk 'BEGIN{for(i=0;i<120000;i++)printf "x},{y"}')
+SEP_MSGS='[{"role":"user","content":"task"},{"role":"user","content":"old"},{"type":"reasoning","id":"rs_huge","summary":[]},{"type":"function_call","call_id":"call_huge","name":"grep","arguments":"{}"},{"type":"function_call_output","call_id":"call_huge","output":"'"$SEP_PAYLOAD"'"},{"role":"user","content":"latest"}]'
+CTX_LIMIT=12000; AGENT_RESERVE=1000; AGENT_KEEP_RECENT=2000
+OUT=$(trim_context "$SEP_MSGS" "huge separator payload")
+valid_json "$OUT" && [ ${#OUT} -le $((CTX_LIMIT-AGENT_RESERVE)) ] && printf '%s' "$OUT" | grep -q 'omitted during compaction' \
+  && pass "TC-8e" "huge tool output with literal },{ compacts quickly and validly" \
+  || fail "TC-8e" "huge separator payload compaction invalid" "len=${#OUT} cap=$((CTX_LIMIT-AGENT_RESERVE)) out=${OUT:0:300}"
 AGENT_KEEP_RECENT=$OLD_KEEP; CTX_LIMIT=$OLD_CTX; AGENT_RESERVE=$OLD_RES
 
 # Edge case: API returns empty TX → local compaction note instead of passing through oversized MSGS
@@ -323,6 +330,99 @@ OUT=$(trim_context "$MSGS_BIG" 2>/dev/null)
 [ "$OUT" != "$MSGS_BIG" ] && valid_json "$OUT" && printf '%s' "$OUT" | grep -q 'compacted locally' \
   && pass "TC-9" "API failure → local compacted fallback" \
   || fail "TC-9" "local fallback didn't fire" "out=$OUT"
+
+# New compaction guarantees: always valid and under CTX_LIMIT-AGENT_RESERVE.
+OLD_CTX=$CTX_LIMIT OLD_RES=$AGENT_RESERVE OLD_KEEP=$AGENT_KEEP_RECENT
+CTX_LIMIT=1400; AGENT_RESERVE=200; AGENT_KEEP_RECENT=100000
+call_api(){ printf '%s' '{"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"short structured summary"}]}'; }
+OUT=$(trim_context "$MSGS_BIG" "hard budget")
+valid_json "$OUT" && [ ${#OUT} -le $((CTX_LIMIT-AGENT_RESERVE)) ] \
+  && pass "TC-9b" "normal compaction stays under hard budget" \
+  || fail "TC-9b" "over budget or invalid" "len=${#OUT} cap=$((CTX_LIMIT-AGENT_RESERVE)) out=${OUT:0:200}"
+
+HUGE_TASK=$(printf 'A%.0s' $(seq 1 5000))
+HUGE_FIRST='[{"role":"user","content":"'"$HUGE_TASK"'"},{"role":"assistant","content":"old1"},{"role":"user","content":"old2"},{"role":"assistant","content":"old3"},{"role":"user","content":"old4"},{"role":"assistant","content":"old5"},{"role":"user","content":"latest"}]'
+CTX_LIMIT=1200; AGENT_RESERVE=200; AGENT_KEEP_RECENT=500
+call_api(){ printf '%s' '{"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"summary"}]}'; }
+OUT=$(trim_context "$HUGE_FIRST" "huge anchor")
+valid_json "$OUT" && [ ${#OUT} -le $((CTX_LIMIT-AGENT_RESERVE)) ] \
+  && pass "TC-9c" "huge first message falls back under budget" \
+  || fail "TC-9c" "huge anchor escaped budget guard" "len=${#OUT} cap=$((CTX_LIMIT-AGENT_RESERVE)) out=${OUT:0:200}"
+
+GIANT_SUM=$(printf 'S%.0s' $(seq 1 5000))
+CTX_LIMIT=1500; AGENT_RESERVE=200; AGENT_KEEP_RECENT=500
+call_api(){ printf '%s' '{"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"'"$GIANT_SUM"'"}]}'; }
+OUT=$(trim_context "$MSGS_BIG" "giant summary")
+valid_json "$OUT" && [ ${#OUT} -le $((CTX_LIMIT-AGENT_RESERVE)) ] \
+  && pass "TC-9d" "oversized model summary falls back under budget" \
+  || fail "TC-9d" "giant summary escaped budget guard" "len=${#OUT} cap=$((CTX_LIMIT-AGENT_RESERVE)) out=${OUT:0:200}"
+
+ERR_MSGS='[{"role":"user","content":"task"},{"role":"assistant","content":[{"type":"tool_use","id":"e","name":"read","input":{"path":"errfile.sh"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"e","content":"Error: file not found: errfile.sh"}]},{"role":"assistant","content":"old3"},{"role":"user","content":"old4"},{"role":"assistant","content":"old5"},{"role":"user","content":"latest"}]'
+CTX_LIMIT=1800; AGENT_RESERVE=200; AGENT_KEEP_RECENT=100
+call_api(){ printf '%s' '{"error":{"message":"rate limit"}}'; }
+OUT=$(trim_context "$ERR_MSGS" "local facts" 2>/dev/null)
+valid_json "$OUT" && printf '%s' "$OUT" | grep -q 'compacted locally' && printf '%s' "$OUT" | grep -q 'errfile.sh' && printf '%s' "$OUT" | grep -q 'Error:' \
+  && pass "TC-9e" "local fallback preserves useful path/error facts" \
+  || fail "TC-9e" "local fallback lost useful facts" "out=$OUT"
+
+FIXTURE_MSGS=$(cat "$SCRIPT_DIR/fixtures/long_anthropic_msgs.json")
+CTX_LIMIT=7000; AGENT_RESERVE=300; AGENT_KEEP_RECENT=200
+call_api(){ printf '%s' '{"error":{"message":"rate limit"}}'; }
+OUT=$(trim_context "$FIXTURE_MSGS" "fixture local fallback" 2>/dev/null)
+valid_json "$FIXTURE_MSGS" && valid_json "$OUT" && [ ${#OUT} -le $((CTX_LIMIT-AGENT_RESERVE)) ] \
+  && printf '%s' "$OUT" | grep -q 'pu.sh' \
+  && printf '%s' "$OUT" | grep -q 'compaction-improvements.md' \
+  && printf '%s' "$OUT" | grep -q 'eval/test_real.sh' \
+  && printf '%s' "$OUT" | grep -q 'AGENT_KEEP_RECENT' \
+  && printf '%s' "$OUT" | grep -q '\[exit:1\]' \
+  && pass "TC-9f" "fixture compaction preserves realistic session facts" \
+  || fail "TC-9f" "fixture compaction lost facts or budget" "len=${#OUT} cap=$((CTX_LIMIT-AGENT_RESERVE)) out=${OUT:0:500}"
+CTX_LIMIT=$OLD_CTX; AGENT_RESERVE=$OLD_RES; AGENT_KEEP_RECENT=$OLD_KEEP
+
+# End-to-end: a realistic oversized user-message history should compact before
+# the model call, send valid JSON under budget, and continue/save normally.
+OLD_CTX=$CTX_LIMIT OLD_RES=$AGENT_RESERVE OLD_KEEP=$AGENT_KEEP_RECENT OLD_HIST=${HISTORY:-} OLD_PIPE=$PIPE OLD_MAX=$MAX_STEPS OLD_PROVIDER=$PROVIDER OLD_MODEL=$MODEL OLD_EFFORT_OK=$EFFORT_OK OLD_KEY=${OPENAI_API_KEY:-}
+USER_BLOW_MSGS=$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])), separators=(",",":")))' "$SCRIPT_DIR/fixtures/long_user_msgs.json")
+CTX_LIMIT=3400; AGENT_RESERVE=300; AGENT_KEEP_RECENT=1200
+MSGS=$USER_BLOW_MSGS; HISTORY="$TMPD/user_blow_history.json"; LOG="$TMPD/user_blow.jsonl"; PIPE=1; MAX_STEPS=3; PROVIDER=openai; MODEL=gpt-5.5; EFFORT_OK=1; OPENAI_API_KEY=dummy
+REQF="$TMPD/user_blow_request.json"; CALLS="$TMPD/user_blow_calls"; : > "$CALLS"
+call_api(){
+  printf x >> "$CALLS"
+  case "$1" in
+    *"Summarize the earlier transcript"*)
+      printf '%s' '{"output_text":"Goal: debug pu.sh compaction with long user messages. Constraints: keep runtime dependency-free; preserve latest user request; validate JSON after compaction.","usage":{"input_tokens":1,"output_tokens":1}}';;
+    *)
+      printf '%s' "$1" > "$REQF"
+      printf '%s' '{"output_text":"post compact ok","usage":{"input_tokens":1,"output_tokens":1}}';;
+  esac
+}
+USER_BLOW_OUT=$(run_task "Now apply the smallest safe fix and report what changed" 2>"$TMPD/user_blow.err"); USER_BLOW_RC=$?
+REQ_JSON=$(cat "$REQF" 2>/dev/null || true); HIST_JSON=$(cat "$HISTORY" 2>/dev/null || true); CALL_N=$(wc -c < "$CALLS" | tr -d ' ')
+[ $USER_BLOW_RC -eq 0 ] && [ "$USER_BLOW_OUT" = "post compact ok" ] && [ "$CALL_N" = 2 ] \
+  && valid_json "$REQ_JSON" && [ ${#REQ_JSON} -le $((CTX_LIMIT-AGENT_RESERVE)) ] \
+  && json_field "$REQ_JSON" 'assert any("Earlier compacted" in (x.get("content","") if isinstance(x.get("content"), str) else "") for x in d); assert d[-1]["content"] == "Now apply the smallest safe fix and report what changed"' \
+  && valid_json "$HIST_JSON" && json_field "$HIST_JSON" 'assert d[-1]["content"] == "post compact ok"' \
+  && pass "TC-9g" "oversized realistic user history compacts and continues" \
+  || fail "TC-9g" "user-message compaction did not continue cleanly" "rc=$USER_BLOW_RC calls=$CALL_N out=$USER_BLOW_OUT err=$(cat "$TMPD/user_blow.err" 2>/dev/null) req_len=${#REQ_JSON} req=${REQ_JSON:0:400}"
+
+# Regression for an already-corrupted compacted OpenAI history: do not send a
+# function_call_output unless the matching function_call is present before it.
+ORPHAN_MSGS='[{"role":"user","content":"old task"},{"role":"user","content":"[Earlier compacted memory:\nok]"},{"role":"user","content":"continue"},{"type":"reasoning","id":"rs_orphan","summary":[]},{"type":"function_call_output","call_id":"call_ArSXATXNDlBnp0gPrS6lFTCZ","output":"Edited eval/test_real.sh"},{"type":"function_call","call_id":"call_good","name":"read","arguments":"{}"},{"type":"function_call_output","call_id":"call_good","output":"ok"}]'
+CTX_LIMIT=20000; AGENT_RESERVE=1000; AGENT_KEEP_RECENT=1200
+MSGS=$ORPHAN_MSGS; HISTORY="$TMPD/orphan_history.json"; LOG="$TMPD/orphan.jsonl"; PIPE=1; MAX_STEPS=2; PROVIDER=openai; MODEL=gpt-5.5; EFFORT_OK=1; OPENAI_API_KEY=dummy
+REQF="$TMPD/orphan_request.json"
+call_api(){ printf '%s' "$1" > "$REQF"; printf '%s' '{"output_text":"orphan clean ok","usage":{"input_tokens":1,"output_tokens":1}}'; }
+ORPHAN_OUT=$(run_task "what bugs are outstanding?" 2>"$TMPD/orphan.err"); ORPHAN_RC=$?; ORPHAN_REQ=$(cat "$REQF" 2>/dev/null || true)
+[ $ORPHAN_RC -eq 0 ] && [ "$ORPHAN_OUT" = "orphan clean ok" ] && valid_json "$ORPHAN_REQ" \
+  && json_field "$ORPHAN_REQ" 'calls=set();
+for x in d:
+    if x.get("type") == "function_call": calls.add(x.get("call_id"))
+    if x.get("type") == "function_call_output": assert x.get("call_id") in calls, x.get("call_id")
+assert "call_ArSXATXNDlBnp0gPrS6lFTCZ" not in [x.get("call_id") for x in d if x.get("type") == "function_call_output"]' \
+  && pass "TC-9h" "orphan OpenAI function_call_output is removed before request" \
+  || fail "TC-9h" "orphan OpenAI output leaked into request" "rc=$ORPHAN_RC out=$ORPHAN_OUT err=$(cat "$TMPD/orphan.err" 2>/dev/null) req=$ORPHAN_REQ"
+CTX_LIMIT=$OLD_CTX; AGENT_RESERVE=$OLD_RES; AGENT_KEEP_RECENT=$OLD_KEEP; HISTORY=$OLD_HIST; PIPE=$OLD_PIPE; MAX_STEPS=$OLD_MAX; PROVIDER=$OLD_PROVIDER; MODEL=$OLD_MODEL; EFFORT_OK=$OLD_EFFORT_OK; OPENAI_API_KEY=$OLD_KEY
+call_api(){ printf '%s' '{"error":{"message":"rate limit"}}'; }
 
 sleep(){ :; }
 MSGS=; LOG="$TMPD/run_task.jsonl"; MAX_STEPS=1; PIPE=1; PROVIDER=openai; MODEL=gpt-5.5; EFFORT_OK=1

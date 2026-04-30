@@ -1,0 +1,38 @@
+[
+  {
+    "role": "user",
+    "content": "We are shipping the desktop sync client today and the release build started failing after the context-compaction patch. Please investigate without rewriting the harness. Constraints: keep pu.sh dependency-free, keep /bin/sh compatibility as much as practical, do not use jq/python in the runtime script, and preserve exact error messages in tests. The symptom in CI is that a long interactive session prints [pu] Compacting and then never reaches the model call. I need a small, reviewable fix plus regression coverage."
+  },
+  {
+    "role": "assistant",
+    "content": "I will inspect pu.sh and the eval tests, reproduce compaction locally with mocked API calls, and then add a targeted regression. I will avoid changing runtime dependencies."
+  },
+  {
+    "role": "user",
+    "content": "Here is the sort of real session content that accumulated before the failure: I asked the agent to grep logs, it pasted release notes, and then I gave it this JSON-ish diagnostic from a deploy dashboard: {\"jobs\":[{\"name\":\"macos-sign\",\"status\":\"passed\"},{\"name\":\"linux-package\",\"status\":\"failed\",\"reason\":\"artifact checksum mismatch\"},{\"name\":\"windows-smoke\",\"status\":\"queued\"}],\"build\":\"2026.04.30.7\"}. Please make sure braces, commas, and },{ sequences inside user text do not corrupt the compacted transcript."
+  },
+  {
+    "role": "assistant",
+    "content": "Noted. The test should include user-authored JSON snippets and normal prose, force the history over a small context budget, and then assert the compacted request is still valid JSON before the mocked model returns."
+  },
+  {
+    "role": "user",
+    "content": "Additional context from product: Support reported that people paste long task descriptions in the REPL. A typical prompt includes a goal, constraints, several log excerpts, and a final instruction like 'continue from the latest state'. The compaction memory must keep enough state to continue: files touched were pu.sh, eval/test_real.sh, README.md, docs/how-pu-works.md; the known failure was a hang while compacting a 2.4 MB .pu-history.json; the suspected root cause was large tool output and user messages with lots of JSON punctuation."
+  },
+  {
+    "role": "assistant",
+    "content": "I will treat this as an end-to-end behavior requirement: after compaction, run_task should still call the model with a syntactically valid compacted history, return the final assistant text, and save valid history for the next turn."
+  },
+  {
+    "role": "user",
+    "content": "One more realistic paste: release checklist notes follow. Step 1: run bash eval/test_real.sh. Step 2: verify sh -n pu.sh. Step 3: check that the captured API payload contains an Earlier compacted memory card and the newest user instruction. Step 4: confirm .pu-history.json remains valid JSON after the final answer. Step 5: do not solve this by adding jq, perl, node, ruby, or python to pu.sh. Test-only Python is okay because the eval suite already uses it."
+  },
+  {
+    "role": "assistant",
+    "content": "Understood. I will add the fixture under eval/fixtures and keep runtime code dependency-free."
+  },
+  {
+    "role": "user",
+    "content": "Final old-session message before the new task: please preserve the high-level goal and latest instructions, but it is okay if bulky logs are summarized. The important post-compaction behavior is that the next model request is parseable, under the configured cap, includes the latest user request, and the agent can finish normally."
+  }
+]
