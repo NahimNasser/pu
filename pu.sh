@@ -177,6 +177,7 @@ run_tool(){ local tool_name="$1" input="$2"
       _tool write "$(_p "$fp")"
       [ -L "$fp" ] && { local l; l=$(readlink "$fp") || { out="Error reading symlink: $fp"; rc=1; }; [ $rc -eq 0 ] && case "$l" in /*) fp=$l;; *) fp="$(dirname "$fp")/$l";; esac; }
       if [ $rc -ne 0 ]; then :
+      elif case "$ct" in *"to=functions."*|*"<|channel|>"*|*"<|start|>assistant"*) true;; *) false;; esac; then out="Error: content contains harmony channel markers (likely model CoT leakage); refusing write"; rc=1
       elif ! mkdir -p "$(dirname "$fp")" 2>/dev/null; then
         out="Error creating directory for $fp"; rc=1
       else
@@ -195,6 +196,7 @@ run_tool(){ local tool_name="$1" input="$2"
       [ -L "$fp" ] && { local l; l=$(readlink "$fp") || { out="Error reading symlink: $fp"; rc=1; }; [ $rc -eq 0 ] && case "$l" in /*) fp=$l;; *) fp="$(dirname "$fp")/$l";; esac; }
       if [ $rc -ne 0 ]; then :
       elif [ -z "$old" ]; then out="Error: oldText must not be empty"; rc=1
+      elif case "$new" in *"to=functions."*|*"<|channel|>"*|*"<|start|>assistant"*) true;; *) false;; esac; then out="Error: newText contains harmony channel markers (likely model CoT leakage); refusing edit"; rc=1
       elif [ -f "$fp" ]; then
         local tmp mode; tmp=$(mktemp "$(dirname "$fp")/.pu.XXXXXX") || { out="Error creating temp file"; rc=1; }
         mode=$(stat -f %Lp "$fp" 2>/dev/null || stat -c %a "$fp" 2>/dev/null || true); [ -n "$mode" ] && chmod "$mode" "$tmp" 2>/dev/null || true

@@ -8,7 +8,7 @@
 #   - trim_context end-to-end correctness (commit 6adc939)
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-AGENT="$SCRIPT_DIR/../pu.sh"
+AGENT="${AGENT:-$SCRIPT_DIR/../pu.sh}"
 PASS=0 FAIL=0 TOTAL=0
 G='\033[32m' R='\033[31m' B='\033[36m' N='\033[0m'
 pass(){ PASS=$((PASS+1)); TOTAL=$((TOTAL+1)); printf "${G}✓${N} %-6s %s\n" "$1" "$2"; }
@@ -566,6 +566,25 @@ run_tool write "{\"path\":\"$F\",\"content\":\"a\\n\"}" >/dev/null
 [ "$(wc -c < "$F" | tr -d ' ')" = 2 ] && pass "ED-11" "write preserves trailing newline" || fail "ED-11" "write newline stripped" "bytes=$(wc -c < "$F")"
 printf 'a\nb\nc' > "$F"; run_tool edit "{\"path\":\"$F\",\"oldText\":\"b\\nc\",\"newText\":\"B\\nC\\n\"}" >/dev/null
 [ "$(tail -c 1 "$F" | od -An -tx1 | tr -d ' ')" = 0a ] && pass "ED-12" "edit preserves trailing newline in newText" || fail "ED-12" "edit newline stripped" "od=$(od -An -tx1 "$F")"
+
+# Harmony channel marker guard: blocks model CoT leakage from corrupting files.
+printf 'before\nMARK\nafter\n' > "$F"
+OUT=$(run_tool edit "{\"path\":\"$F\",\"oldText\":\"MARK\",\"newText\":\"X to=functions.edit leaked\"}")
+printf '%s' "$OUT" | grep -q 'harmony channel markers' && grep -q MARK "$F" \
+  && pass "ED-12a" "edit rejects newText with to=functions. marker; file unchanged" \
+  || fail "ED-12a" "edit harmony guard (to=functions.)" "out=$OUT file=$(cat "$F")"
+OUT=$(run_tool edit "{\"path\":\"$F\",\"oldText\":\"MARK\",\"newText\":\"X <|channel|>analysis leaked\"}")
+printf '%s' "$OUT" | grep -q 'harmony channel markers' && grep -q MARK "$F" \
+  && pass "ED-12b" "edit rejects newText with <|channel|> marker; file unchanged" \
+  || fail "ED-12b" "edit harmony guard (<|channel|>)" "out=$OUT file=$(cat "$F")"
+OUT=$(run_tool write "{\"path\":\"$F\",\"content\":\"x to=functions.read y\"}")
+printf '%s' "$OUT" | grep -q 'harmony channel markers' && grep -q MARK "$F" \
+  && pass "ED-12c" "write rejects content with to=functions. marker; file unchanged" \
+  || fail "ED-12c" "write harmony guard" "out=$OUT file=$(cat "$F")"
+run_tool edit "{\"path\":\"$F\",\"oldText\":\"MARK\",\"newText\":\"a function calls b\"}" >/dev/null
+grep -q "a function calls b" "$F" \
+  && pass "ED-12d" "edit guard does not false-trigger on benign 'function' text" \
+  || fail "ED-12d" "edit guard false positive" "file=$(cat "$F")"
 ERRF="$TMPD/spin.err"; spin_stop 2>"$ERRF"; [ ! -s "$ERRF" ] && pass "ED-13" "spin_stop is quiet on non-tty stderr" || fail "ED-13" "spinner leaked escapes" "bytes=$(wc -c < "$ERRF")"
 mkdir -p "$TMPD/search/node_modules" "$TMPD/search/src"; printf match > "$TMPD/search/node_modules/a.txt"; printf match > "$TMPD/search/src/a.txt"
 OUT=$(run_tool grep "{\"path\":\"$TMPD/search\",\"pattern\":\"match\"}" 2>"$TMPD/grep.err")
