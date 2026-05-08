@@ -44,7 +44,7 @@ Current date: $(date +%Y-%m-%d)
 Current working directory: $(pwd)
 Your source code is at $(cd "$(dirname "$0")"&&pwd)/$(basename "$0"). Use read to inspect it if asked about your capabilities/configuration.}"
 while [ $# -gt 0 ];do
-case "$1" in -h|--help)printf '%s\n' 'pu-unminified.sh — readable educational build of pu.sh (sh+curl, no deps)' 'Usage: ./pu-unminified.sh "task" | ./pu-unminified.sh (interactive) | --pipe | --cost | -v' 'Env: ANTHROPIC_API_KEY OPENAI_API_KEY AGENT_MODEL AGENT_PROVIDER AGENT_SYSTEM AGENT_MAX_STEPS AGENT_MAX_TOKENS AGENT_LOG AGENT_CONFIRM AGENT_VERBOSE AGENT_REASONING_SUMMARY AGENT_CONTEXT_LIMIT AGENT_RESERVE AGENT_TOOL_TRUNC AGENT_READ_MAX AGENT_LOG_TRUNC AGENT_HISTORY AGENT_THINKING/AGENT_EFFORT AGENT_PRICE_* ~/.pu.env' '7 tools, multi-turn, retries, JSONL logging, pipe mode, !command; auto-compaction summarizes older turns; /compact [focus] runs it manually.'
+case "$1" in -h|--help)printf '%s\n' 'pu-unminified.sh — readable educational build of pu.sh (sh+curl, no deps)' 'Usage: ./pu-unminified.sh "task" | ./pu-unminified.sh (interactive) | ./pu-unminified.sh daemon COMMAND | --pipe | --cost | -v' 'Env: ANTHROPIC_API_KEY OPENAI_API_KEY AGENT_MODEL AGENT_PROVIDER AGENT_SYSTEM AGENT_MAX_STEPS AGENT_MAX_TOKENS AGENT_LOG AGENT_CONFIRM AGENT_VERBOSE AGENT_REASONING_SUMMARY AGENT_CONTEXT_LIMIT AGENT_RESERVE AGENT_TOOL_TRUNC AGENT_READ_MAX AGENT_LOG_TRUNC AGENT_HISTORY AGENT_THINKING/AGENT_EFFORT AGENT_PRICE_* ~/.pu.env' '7 tools, multi-turn, retries, JSONL logging, pipe mode, daemon sessions, !command; auto-compaction summarizes older turns; /compact [focus] runs it manually.'
 exit 0;; -v|--version)echo "${0##*/} 0.1.0";exit 0;; --pipe|-p)PIPE=1;shift;; --cost)COST=1;shift;; -i)INTERACTIVE=1;shift;; -n|--no-interactive)INTERACTIVE=-1;shift;; *)break;esac
 done;for _dep in curl awk;do command -v $_dep >/dev/null 2>&1||{ printf '\033[31m[!] %s not found\033[0m\n' "$_dep" >&2;exit 1;}
 done;RUNSH=$(command -v bash 2>/dev/null||echo sh)
@@ -239,14 +239,14 @@ mv "$tmp" "$fp";out="Edited $fp";}||{ rc=$?;rm -f "$tmp"
 rc=1;}
 else out="Error: file not found: $fp";rc=1;fi
 ;; grep)local pat;pat=$(jp "$input" pattern);local gp;gp=$(jp "$input" path);[ -z "$gp" ]&&gp=".";_tool grep "$pat $(_p "$gp")";case "$gp" in -*)gp="./$gp";esac
-out=$(grep -rnIE --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=target --exclude-dir=.venv --exclude=.pu-events.jsonl --exclude=.pu-history.json --exclude=.pu-history.json.meta --exclude=agent.jsonl -- "$pat" "$gp" 2>&1)
+out=$(grep -rnIE --exclude-dir=.git --exclude-dir=.pu --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=target --exclude-dir=.venv --exclude=.pu-events.jsonl --exclude=.pu-history.json --exclude=.pu-history.json.meta --exclude=agent.jsonl -- "$pat" "$gp" 2>&1)
 rc=$?;[ $rc -eq 1 ]&&{ out="No matches";rc=0;}
 out=$(printf '%s\n' "$out"|awk 'NR<=100');; find)local fp;fp=$(jp "$input" path);[ -z "$fp" ]&&fp=".";local fn;fn=$(jp "$input" name);_tool find "$(_p "$fp") $fn"
 case "$fp" in -*)fp="./$fp";esac
 if [ -n "$fn" ];then
-out=$(find "$fp" \( -name .git -o -name node_modules -o -name dist -o -name build -o -name target -o -name .venv -o -name .pu-events.jsonl -o -name .pu-history.json -o -name .pu-history.json.meta -o -name agent.jsonl \) -prune -o -name "$fn" -print 2>&1|head -100)
+out=$(find "$fp" \( -name .git -o -name .pu -o -name node_modules -o -name dist -o -name build -o -name target -o -name .venv -o -name .pu-events.jsonl -o -name .pu-history.json -o -name .pu-history.json.meta -o -name agent.jsonl \) -prune -o -name "$fn" -print 2>&1|head -100)
 else
-out=$(find "$fp" \( -name .git -o -name node_modules -o -name dist -o -name build -o -name target -o -name .venv -o -name .pu-events.jsonl -o -name .pu-history.json -o -name .pu-history.json.meta -o -name agent.jsonl \) -prune -o -print 2>&1|awk -v root="$fp" '{p=$0;if(index(p,root)==1){p=substr(p,length(root)+1);sub("^/","",p)};n=gsub("/","/",p);if(p==""||n<3)print}'|head -100)
+out=$(find "$fp" \( -name .git -o -name .pu -o -name node_modules -o -name dist -o -name build -o -name target -o -name .venv -o -name .pu-events.jsonl -o -name .pu-history.json -o -name .pu-history.json.meta -o -name agent.jsonl \) -prune -o -print 2>&1|awk -v root="$fp" '{p=$0;if(index(p,root)==1){p=substr(p,length(root)+1);sub("^/","",p)};n=gsub("/","/",p);if(p==""||n<3)print}'|head -100)
 fi
 ;; ls)local lp;lp=$(jp "$input" path);[ -z "$lp" ]&&lp=".";_tool ls "$(_p "$lp")";case "$lp" in -*)lp="./$lp";esac
 out=$(ls -la "$lp" 2>&1)||rc=$?;; *)out="Error: unknown tool: $tool_name";rc=1;esac
@@ -429,53 +429,318 @@ case "$t" in start)printf '## Task\n%s\n\n' "$c";; tool_call)printf '### Tool: %
 esac
 done <"$LOG" >>"$out";info "Exported to $out";}
 _sq(){ printf "'%s'" "$(printf '%s' "$1"|sed "s/'/'\\\\''/g")";}
-_have_key(){ case "$PROVIDER" in anthropic)[ -n "${ANTHROPIC_API_KEY:-}" ];; openai)[ -n "${OPENAI_API_KEY:-}" ];; *)return 2;esac
+_daemon_base(){ printf '%s' "${PU_DAEMON_DIR:-.pu/daemons}";}
+_daemon_dir(){ printf '%s/%s' "$(_daemon_base)" "$1";}
+_daemon_valid_name(){ case "$1" in ''|.|..|*/*|*[!A-Za-z0-9_.-]*)return 1;;*)return 0;esac;}
+_daemon_need_name(){ _daemon_valid_name "${1:-}"||{ err "Daemon name must use only letters, numbers, dot, dash, or underscore";return 1;}
 }
-_ensure_key(){ _have_key||{ [ -t 0 ]&&_setup||{
-err "No API key. Set ANTHROPIC_API_KEY or OPENAI_API_KEY (https://console.anthropic.com/settings/keys | https://platform.openai.com/api-keys)";return 1;}
-};}
-_set_provider_model(){ PROVIDER="$1";MODEL="$2";EFFORT_OK=0;case "$PROVIDER:$MODEL" in openai:gpt-5.5*)[ -z "${AGENT_CONTEXT_LIMIT:-}" ]&&CTX_LIMIT=400000;EFFORT_OK=1;;
-anthropic:claude-opus-4-7*)[ -z "${AGENT_CONTEXT_LIMIT:-}" ]&&CTX_LIMIT=272000;EFFORT_OK=1;;
-anthropic:claude-opus-4-6*|anthropic:claude-sonnet-4-6*|anthropic:claude-opus-4-5*)EFFORT_OK=1;esac;}
-_setup(){ local p k m e s u km dm os;printf '\nWelcome to pu-unminified.sh.\n\nProvider:\n  1) Anthropic (Claude)\n  2) OpenAI (GPT)\n> ' >&2;read -r p
-case "$p" in 2|openai|OpenAI)PROVIDER=openai;km=OPENAI_API_KEY;u=https://platform.openai.com/api-keys;dm=gpt-5.5;; *)PROVIDER=anthropic;km=ANTHROPIC_API_KEY
-u=https://console.anthropic.com/settings/keys;dm=claude-opus-4-7;esac
+_daemon_alive(){ case "${1:-}" in ''|*[!0-9]*)return 1;;*)kill -0 "$1" 2>/dev/null;esac;}
+_daemon_script(){ local s="${PU_DAEMON_SCRIPT:-}";if [ -z "$s" ];then case "$0" in */*)s=$0;; *)s=$(command -v "$0" 2>/dev/null||printf '%s' "$0");esac
+fi;case "$s" in /*)printf '%s' "$s";;*)printf '%s/%s' "$PWD" "$s";esac;}
+_daemon_meta(){ local d="$1" k="$2";[ -f "$d/meta" ]||return 0;sed -n "s/^$k=//p" "$d/meta"|tail -1;}
+_daemon_latest_event(){ local f="$1";[ -f "$f" ]||return 0;awk 'NF{x=$0}END{print x}' "$f";}
+_daemon_latest_content(){ local f="$1" want="$2" line t c out="";[ -f "$f" ]||return 0;while IFS= read -r line;do t=$(jp "$line" t);c=$(jp "$line" c);[ "$t" = "$want" ]&&out=$c
+done <"$f";printf '%s' "$out";}
+_daemon_state(){ local d="$1" pid last t;pid=$(cat "$d/pid" 2>/dev/null||true);if ! _daemon_alive "$pid";then [ -n "$pid" ]&&printf exited||printf stopped;return 0;fi
+last=$(_daemon_latest_event "$d/events.jsonl");t=$(jp "$last" t);case "$t" in ''|response)printf idle;;error|max_steps)printf failed;;*)printf busy;esac;}
+_daemon_summary(){ local name="$1" d pid state model provider task;d=$(_daemon_dir "$name");pid=$(cat "$d/pid" 2>/dev/null||true);state=$(_daemon_state "$d")
+model=$(_daemon_meta "$d" model);provider=$(_daemon_meta "$d" provider);task=$(_daemon_latest_content "$d/events.jsonl" start)
+[ ${#task} -gt 60 ]&&task="$(printf '%s' "$task"|cut -c1-57)...";printf '%-18s %-9s %-7s %-10s %-22s %s\n' "$name" "$state" "${pid:--}" "${provider:--}" "${model:--}" "$task";}
+_daemon_ps(){ local b d found=0;b=$(_daemon_base);printf '%-18s %-9s %-7s %-10s %-22s %s\n' NAME STATE PID PROVIDER MODEL LATEST;[ -d "$b" ]||return 0;for d in "$b"/*;do
+[ -d "$d" ]||continue;found=1;_daemon_summary "${d##*/}";done
+[ "$found" = 1 ]||true;}
+_daemon_start(){ local name="${1:-}" d in out events hist meta pid keeper task script started;_daemon_need_name "$name"||return 1;shift||true;task="$*";d=$(_daemon_dir "$name")
+in="$d/in";out="$d/out.log";events="$d/events.jsonl";hist="$d/history.json";meta="$d/meta";if [ -e "$d" ];then pid=$(cat "$d/pid" 2>/dev/null||true);_daemon_alive "$pid"&&{
+err "Daemon already running: $name";return 1;}
+err "Daemon state already exists: $name (use daemon rm $name first)";return 1;fi
+_ensure_key||return 1;mkdir -p "$d"||{ err "Could not create $d";return 1;}
+mkfifo "$in"||{ err "Could not create FIFO: $in";return 1;}
+: >"$out";: >"$events";script=$(_daemon_script);started=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null||date)
+printf 'name=%s\ncwd=%s\nscript=%s\nprovider=%s\nmodel=%s\nstarted_at=%s\n' "$name" "$PWD" "$script" "$PROVIDER" "$MODEL" "$started" >"$meta";(while :;do sleep 3600;done) >"$in"&
+keeper=$!;if [ -n "$task" ];then AGENT_LOG="$events" AGENT_HISTORY="$hist" "$script" -i "$task" <"$in" >"$out" 2>&1& pid=$!;else
+AGENT_LOG="$events" AGENT_HISTORY="$hist" "$script" -i <"$in" >"$out" 2>&1& pid=$!;fi
+printf '%s\n' "$pid" >"$d/pid";printf '%s\n' "$keeper" >"$d/keeper.pid";info "Started daemon $name (pid $pid)";printf '%s\n' "$d";}
+_daemon_send(){ local name="${1:-}" d in pid msg;_daemon_need_name "$name"||return 1;shift||true;d=$(_daemon_dir "$name");[ -d "$d" ]||{ err "Daemon not found: $name";return 1;}
+pid=$(cat "$d/pid" 2>/dev/null||true);_daemon_alive "$pid"||{ err "Daemon is not running: $name";return 1;}
+in="$d/in";[ -p "$in" ]||{ err "Daemon inbox missing: $in";return 1;}
+if [ $# -gt 0 ];then msg="$*";else msg=$(cat);fi;[ -n "$msg" ]||{ err "No prompt provided";return 1;}
+printf '%s\n' "$msg" >"$in";}
+_daemon_stop(){ local name="${1:-}" d in pid keeper i;_daemon_need_name "$name"||return 1;d=$(_daemon_dir "$name");[ -d "$d" ]||{ err "Daemon not found: $name";return 1;}
+pid=$(cat "$d/pid" 2>/dev/null||true);keeper=$(cat "$d/keeper.pid" 2>/dev/null||true);in="$d/in";if _daemon_alive "$pid";then
+[ -p "$in" ]&&printf '/quit\n' >"$in" 2>/dev/null||true;i=0;while _daemon_alive "$pid"&&[ "$i" -lt 3 ];do sleep 1;i=$((i+1));done
+_daemon_alive "$pid"&&kill "$pid" 2>/dev/null||true;wait "$pid" 2>/dev/null||true;fi
+_daemon_alive "$keeper"&&kill "$keeper" 2>/dev/null||true;wait "$keeper" 2>/dev/null||true;info "Stopped daemon $name";}
+_daemon_rm(){ local force=0 name d pid;case "${1:-}" in -f|--force)force=1;shift;esac
+name="${1:-}";_daemon_need_name "$name"||return 1;d=$(_daemon_dir "$name");[ -d "$d" ]||{ err "Daemon not found: $name";return 1;}
+pid=$(cat "$d/pid" 2>/dev/null||true);if _daemon_alive "$pid"&&[ "$force" != 1 ];then err "Daemon is still running: $name (stop it first, or use daemon rm -f $name)";return 1;fi
+[ "$force" = 1 ]&&_daemon_stop "$name" >/dev/null 2>&1||true;rm -rf "$d";info "Removed daemon $name";}
+_daemon_status(){ local name="${1:-}" d pid keeper;_daemon_need_name "$name"||return 1;d=$(_daemon_dir "$name");[ -d "$d" ]||{ err "Daemon not found: $name";return 1;}
+pid=$(cat "$d/pid" 2>/dev/null||true);keeper=$(cat "$d/keeper.pid" 2>/dev/null||true)
+printf 'name: %s\nstate: %s\npid: %s\nkeeper_pid: %s\nprovider: %s\nmodel: %s\ncwd: %s\nlog: %s\nhistory: %s\nlatest: %s\n' \
+"$name" "$(_daemon_state "$d")" "${pid:--}" "${keeper:--}" "$(_daemon_meta "$d" provider)" "$(_daemon_meta "$d" model)" "$(_daemon_meta "$d" cwd)" "$d/out.log" "$d/history.json" "$(_daemon_latest_content "$d/events.jsonl" start)"
+}
+_daemon_log(){
+local name="${1:-}" d mode=""
+_daemon_need_name "$name"||return 1
+shift||true
+case "${1:-}" in -f|--follow)mode=f;esac
+d=$(_daemon_dir "$name")
+[ -f "$d/out.log" ]||{
+err "Daemon log not found: $name"
+return 1
+}
+if [ "$mode" = f ];then tail -n 80 -f "$d/out.log";else tail -n 120 "$d/out.log";fi
+}
+_daemon_attach(){
+local name="${1:-}" d in pid tp line
+_daemon_need_name "$name"||return 1
+d=$(_daemon_dir "$name")
+[ -d "$d" ]||{
+err "Daemon not found: $name"
+return 1
+}
+pid=$(cat "$d/pid" 2>/dev/null||true)
+_daemon_alive "$pid"||{
+err "Daemon is not running: $name"
+return 1
+}
+in="$d/in"
+[ -p "$in" ]||{
+err "Daemon inbox missing: $in"
+return 1
+}
+info "Attached to $name. Type /quit to stop the daemon, Ctrl-C to detach."
+tail -n 80 -f "$d/out.log"&
+tp=$!
+trap 'kill "$tp" 2>/dev/null; exit 0' INT TERM
+while IFS= read -r line;do
+printf '%s\n' "$line" >"$in"
+done
+kill "$tp" 2>/dev/null||true
+trap - INT TERM
+}
+daemon_cmd(){
+local cmd="${1:-}"
+[ $# -gt 0 ]&&shift
+case "$cmd" in
+start)_daemon_start "$@";;
+ps|list|ls)_daemon_ps;;
+status)_daemon_status "$@";;
+attach)_daemon_attach "$@";;
+send)_daemon_send "$@";;
+log)_daemon_log "$@";;
+stop)_daemon_stop "$@";;
+rm|remove)_daemon_rm "$@";;
+''|-h|--help|help)printf '%s\n' 'Usage: pu.sh daemon start NAME ["task"] | ps | status NAME | attach NAME | send NAME "prompt" | log NAME [-f] | stop NAME | rm [-f] NAME';;
+*)err "Unknown daemon command: $cmd"
+return 1
+esac
+}
+_have_key(){
+case "$PROVIDER" in anthropic)[ -n "${ANTHROPIC_API_KEY:-}" ];;
+openai)[ -n "${OPENAI_API_KEY:-}" ];;
+*)return 2
+esac
+}
+_ensure_key(){
+_have_key||{
+[ -t 0 ]&&_setup||{
+err "No API key. Set ANTHROPIC_API_KEY or OPENAI_API_KEY (https://console.anthropic.com/settings/keys | https://platform.openai.com/api-keys)"
+return 1
+}
+}
+}
+_set_provider_model(){
+PROVIDER="$1"
+MODEL="$2"
+EFFORT_OK=0
+case "$PROVIDER:$MODEL" in openai:gpt-5.5*)[ -z "${AGENT_CONTEXT_LIMIT:-}" ]&&CTX_LIMIT=400000
+EFFORT_OK=1
+;;
+anthropic:claude-opus-4-7*)[ -z "${AGENT_CONTEXT_LIMIT:-}" ]&&CTX_LIMIT=272000
+EFFORT_OK=1
+;;
+anthropic:claude-opus-4-6*|anthropic:claude-sonnet-4-6*|anthropic:claude-opus-4-5*)EFFORT_OK=1;esac
+}
+_setup(){
+local p k m e s u km dm os
+printf '\nWelcome to pu-unminified.sh.\n\nProvider:\n  1) Anthropic (Claude)\n  2) OpenAI (GPT)\n> ' >&2
+read -r p
+case "$p" in 2|openai|OpenAI)PROVIDER=openai
+km=OPENAI_API_KEY
+u=https://platform.openai.com/api-keys
+dm=gpt-5.5
+;;
+*)PROVIDER=anthropic
+km=ANTHROPIC_API_KEY
+u=https://console.anthropic.com/settings/keys
+dm=claude-opus-4-7
+esac
 command -v open >/dev/null 2>&1&&open "$u" 2>/dev/null||command -v xdg-open >/dev/null 2>&1&&xdg-open "$u" 2>/dev/null||true
-printf 'Get a key at %s\nPaste API key (hidden): ' "$u" >&2;os=$(stty -g 2>/dev/null||true);stty -echo 2>/dev/null||true;read -r k
-[ -n "$os" ]&&stty "$os" 2>/dev/null||stty echo 2>/dev/null;printf '\n' >&2;k=$(_clean_key "$k");[ -z "$k" ]&&{ err "No key entered";exit 1;}
-printf 'Model [%s]: ' "$dm" >&2;read -r m;[ -z "$m" ]&&m=$dm;_set_provider_model "$PROVIDER" "$m"
-printf 'Effort [medium] (OpenAI: none/minimal/low/medium/high/xhigh; Claude: low/medium/high/max, xhigh on Opus 4.7): ' >&2;read -r e;[ -z "$e" ]&&e=medium;case "$e" in n)e=none;;
-min)e=minimal;; l)e=low;; m)e=medium;; h)e=high;; x|xh)e=xhigh;esac
-EFFORT=$e;export "$km=$k" AGENT_PROVIDER="$PROVIDER" AGENT_MODEL="$MODEL" AGENT_EFFORT="$EFFORT";printf 'Save to ~/.pu.env so next time is automatic? [Y/n] ' >&2;read -r s
-case "$s" in n|N|no|NO)info "Not saved (set in this session only)";; *)(umask 077
+printf 'Get a key at %s\nPaste API key (hidden): ' "$u" >&2
+os=$(stty -g 2>/dev/null||true)
+stty -echo 2>/dev/null||true
+read -r k
+[ -n "$os" ]&&stty "$os" 2>/dev/null||stty echo 2>/dev/null
+printf '\n' >&2
+k=$(_clean_key "$k")
+[ -z "$k" ]&&{
+err "No key entered"
+exit 1
+}
+printf 'Model [%s]: ' "$dm" >&2
+read -r m
+[ -z "$m" ]&&m=$dm
+_set_provider_model "$PROVIDER" "$m"
+printf 'Effort [medium] (OpenAI: none/minimal/low/medium/high/xhigh; Claude: low/medium/high/max, xhigh on Opus 4.7): ' >&2
+read -r e
+[ -z "$e" ]&&e=medium
+case "$e" in n)e=none;;
+min)e=minimal;;
+l)e=low;;
+m)e=medium;;
+h)e=high;;
+x|xh)e=xhigh
+esac
+EFFORT=$e
+export "$km=$k" AGENT_PROVIDER="$PROVIDER" AGENT_MODEL="$MODEL" AGENT_EFFORT="$EFFORT"
+printf 'Save to ~/.pu.env so next time is automatic? [Y/n] ' >&2
+read -r s
+case "$s" in n|N|no|NO)info "Not saved (set in this session only)";;
+*)(umask 077
 printf '%s=%s\nAGENT_PROVIDER=%s\nAGENT_MODEL=%s\nAGENT_EFFORT=%s\nAGENT_REASONING_SUMMARY=%s\n' "$km" "$(_sq "$k")" "$(_sq "$PROVIDER")" "$(_sq "$MODEL")" "$(_sq "$EFFORT")" "$(_sq "$REASONING_SUMMARY")" >"$HOME/.pu.env")&&info "Saved ~/.pu.env"
 esac
 }
-handle_cmd(){ case "$1" in /model|/model\ *)local nm;nm=$(printf '%s' "$1"|sed 's|^/model *||');[ -n "$nm" ]&&{ case "$nm" in gpt-*|o1*|o3*|o4*)_set_provider_model openai "$nm";;
-claude-*)_set_provider_model anthropic "$nm";; *)MODEL="$nm";esac
-info "Model: $MODEL ($PROVIDER)";}||info "Current: $MODEL ($PROVIDER)";return 0;; /effort|/effort\ *)local ef;ef=$(printf '%s' "$1"|sed 's|^/effort *||');[ -n "$ef" ]&&{
-case "$ef" in n)ef=none;; min)ef=minimal;; l)ef=low;; m)ef=medium;; h)ef=high;; x|xh)ef=xhigh;esac
-EFFORT=$ef;}
-info "Effort: $EFFORT";return 0;; /reasoning|/reasoning\ *)local rs;rs=$(printf '%s' "$1"|sed 's|^/reasoning *||');[ -n "$rs" ]&&{
+handle_cmd(){
+case "$1" in
+/model|/model\ *)local nm
+nm=$(printf '%s' "$1"|sed 's|^/model *||')
+[ -n "$nm" ]&&{
+case "$nm" in gpt-*|o1*|o3*|o4*)_set_provider_model openai "$nm";;
+claude-*)_set_provider_model anthropic "$nm";;
+*)MODEL="$nm"
+esac
+info "Model: $MODEL ($PROVIDER)"
+}||info "Current: $MODEL ($PROVIDER)"
+return 0
+;;
+/effort|/effort\ *)local ef
+ef=$(printf '%s' "$1"|sed 's|^/effort *||')
+[ -n "$ef" ]&&{
+case "$ef" in n)ef=none;;
+min)ef=minimal;;
+l)ef=low;;
+m)ef=medium;;
+h)ef=high;;
+x|xh)ef=xhigh
+esac
+EFFORT=$ef
+}
+info "Effort: $EFFORT"
+return 0
+;;
+/reasoning|/reasoning\ *)local rs
+rs=$(printf '%s' "$1"|sed 's|^/reasoning *||')
+[ -n "$rs" ]&&{
 case "$rs" in off|none|0|false)rs=off;;c)rs=concise;;d)rs=detailed;;a)rs=auto;esac
-case "$rs" in off|concise|detailed|auto)REASONING_SUMMARY=$rs;;*)err "Usage: /reasoning [auto|concise|detailed|off]";return 0;esac
-};info "Reasoning summaries: $REASONING_SUMMARY";return 0;; /flush)MSGS="";[ -n "$HISTORY" ]&&{ _mkparent "$HISTORY";printf '[]' >"$HISTORY";rm -f "$HISTORY.meta";}
-[ -n "$LOG" ]&&{ _mkparent "$LOG";: >"$LOG";}
-info "Flushed conversation memory and event log";return 0;; /quit|/exit)exit 0;; /login)_setup;return 0;;
-/logout)[ -f "$HOME/.pu.env" ]&&rm "$HOME/.pu.env"&&info "Removed ~/.pu.env"||info "No ~/.pu.env to remove";unset ANTHROPIC_API_KEY OPENAI_API_KEY
-info "Logged out. /login or set env vars to continue.";return 0;; /compact|/compact\ *)MSGS=$(trim_context "$MSGS" "$(printf '%s' "$1"|sed 's|^/compact *||')");save
-info "Compacted (${#MSGS}b)";return 0;; /export|/export\ *)_export "$(printf '%s' "$1"|sed 's|^/export *||')";return 0;; /skill:*)_skill "$(printf '%s' "$1"|sed 's|^/skill:||')"
-return 0;; /session)info "Log: $LOG | Model: $MODEL ($PROVIDER) | Max steps: $MAX_STEPS";return 0;; /*)local cn;cn=$(printf '%s' "$1"|sed 's|^/||'|cut -d' ' -f1);local tp
-tp=$(_tpl "$cn");[ "$tp" != "$cn" ]&&{ info "Template: $cn";run_task "$tp";return 0;}
-err "Unknown command: $1";return 0;esac
-return 1;}
+case "$rs" in off|concise|detailed|auto)REASONING_SUMMARY=$rs;;*)err "Usage: /reasoning [auto|concise|detailed|off]"
+return 0
+esac
+}
+info "Reasoning summaries: $REASONING_SUMMARY"
+return 0
+;;
+/flush)MSGS=""
+[ -n "$HISTORY" ]&&{
+_mkparent "$HISTORY"
+printf '[]' >"$HISTORY"
+rm -f "$HISTORY.meta"
+}
+[ -n "$LOG" ]&&{
+_mkparent "$LOG"
+: >"$LOG"
+}
+info "Flushed conversation memory and event log"
+return 0
+;;
+/quit|/exit)exit 0;;
+/login)_setup
+return 0
+;;
+/logout)[ -f "$HOME/.pu.env" ]&&rm "$HOME/.pu.env"&&info "Removed ~/.pu.env"||info "No ~/.pu.env to remove"
+unset ANTHROPIC_API_KEY OPENAI_API_KEY
+info "Logged out. /login or set env vars to continue."
+return 0
+;;
+/compact|/compact\ *)MSGS=$(trim_context "$MSGS" "$(printf '%s' "$1"|sed 's|^/compact *||')")
+save
+info "Compacted (${#MSGS}b)"
+return 0
+;;
+/export|/export\ *)_export "$(printf '%s' "$1"|sed 's|^/export *||')"
+return 0
+;;
+/skill:*)_skill "$(printf '%s' "$1"|sed 's|^/skill:||')"
+return 0
+;;
+/session)info "Log: $LOG | Model: $MODEL ($PROVIDER) | Max steps: $MAX_STEPS"
+return 0
+;;
+/*)local cn
+cn=$(printf '%s' "$1"|sed 's|^/||'|cut -d' ' -f1)
+local tp
+tp=$(_tpl "$cn")
+[ "$tp" != "$cn" ]&&{
+info "Template: $cn"
+run_task "$tp"
+return 0
+}
+err "Unknown command: $1"
+return 0
+esac
+return 1
+}
 TASK=""
-if [ "$PIPE" = 1 ]&&[ ! -t 0 ];then IN=$(cat);[ $# -gt 0 ]&&TASK=$([ -n "$IN" ]&&printf '%s\n%s' "$IN" "$*"||printf '%s' "$*")||TASK="$IN";else [ $# -gt 0 ]&&TASK="$*"||{
-[ ! -t 0 ]&&TASK=$(cat);}
-fi;[ -z "$TASK" ]&&[ -t 0 ]&&[ "$INTERACTIVE" != -1 ]&&INTERACTIVE=1;[ -z "$TASK" ]&&[ "$INTERACTIVE" != 1 ]&&{
-err 'No task. Usage: ./pu-unminified.sh "task" or ./pu-unminified.sh -i';exit 1;}
-_ensure_key||exit 1;load_context;[ -z "$MSGS" ]&&load&&{ _replay;info "Resumed memory: $HISTORY (/flush to clear)";}||true;[ -n "$TASK" ]&&{ info "$TASK"
-info "$MODEL ($PROVIDER) max steps: $MAX_STEPS";PROMPT_LAST_INPUT=$TASK;run_task "$TASK";rc=$?;[ "$INTERACTIVE" = 1 ]||exit "$rc";}||true
-info "$MODEL ($PROVIDER) | /model /effort /reasoning /login /logout /flush /compact /export /skill:name /quit | !cmd";while true;do _STATE=idle;_prompt_read INPUT||break
-case "$INPUT" in quit|exit|q)break;; ''|' ')continue;esac
-handle_cmd "$INPUT"&&continue||true;PROMPT_LAST_INPUT=$INPUT;run_task "$INPUT";done
+if [ "${1:-}" = daemon ];then
+shift
+daemon_cmd "$@"
+exit $?
+fi
+if [ "$PIPE" = 1 ]&&[ ! -t 0 ];then
+IN=$(cat)
+[ $# -gt 0 ]&&TASK=$([ -n "$IN" ]&&printf '%s\n%s' "$IN" "$*"||printf '%s' "$*")||TASK="$IN"
+else
+[ $# -gt 0 ]&&TASK="$*"||{
+[ ! -t 0 ]&&TASK=$(cat)
+}
+fi
+[ -z "$TASK" ]&&[ -t 0 ]&&[ "$INTERACTIVE" != -1 ]&&INTERACTIVE=1
+[ -z "$TASK" ]&&[ "$INTERACTIVE" != 1 ]&&{
+err 'No task. Usage: ./pu-unminified.sh "task" or ./pu-unminified.sh -i'
+exit 1
+}
+_ensure_key||exit 1
+load_context
+[ -z "$MSGS" ]&&load&&{
+_replay
+info "Resumed memory: $HISTORY (/flush to clear)"
+}||true
+[ -n "$TASK" ]&&{
+info "$TASK"
+info "$MODEL ($PROVIDER) max steps: $MAX_STEPS"
+PROMPT_LAST_INPUT=$TASK
+run_task "$TASK"
+rc=$?
+[ "$INTERACTIVE" = 1 ]||exit "$rc"
+}||true
+info "$MODEL ($PROVIDER) | /model /effort /reasoning /login /logout /flush /compact /export /skill:name /quit | !cmd"
+while true;do
+_STATE=idle
+_prompt_read INPUT||break
+case "$INPUT" in quit|exit|q)break;;
+''|' ')continue
+esac
+handle_cmd "$INPUT"&&continue||true
+PROMPT_LAST_INPUT=$INPUT
+run_task "$INPUT"
+done

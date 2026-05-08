@@ -17,6 +17,7 @@ It is intentionally small: one shell file, `curl`, `awk`, and common Unix tools.
 | `.pu-history.json` | Model memory / resumable provider transcript |
 | `.pu-history.json.meta` | Provider/model marker for safe resume |
 | `.pu-events.jsonl` | Event log for replay, debugging, and `/export` |
+| `.pu/daemons/NAME/` | Project-local daemon inbox, transcript, event log, and history |
 | `~/.pu.env` | Optional saved API key/provider/model/effort from login |
 
 The split is intentional.
@@ -163,6 +164,22 @@ To reset the session:
 ```
 
 This clears the in-memory transcript, writes `[]` to the history file, removes the history `.meta` sidecar, and truncates `.pu-events.jsonl`. Resume after `/flush` starts from a clean history and replay log.
+
+## Daemon mode
+
+Daemon mode is a thin supervisor around normal interactive `pu.sh`.
+
+```sh
+./pu.sh daemon start NAME "initial task"
+./pu.sh daemon ps
+./pu.sh daemon attach NAME
+./pu.sh daemon send NAME "next prompt"
+./pu.sh daemon stop NAME
+```
+
+Each daemon gets isolated state under `.pu/daemons/NAME/`: a FIFO inbox, `out.log`, `events.jsonl`, `history.json`, pid files, and metadata. `daemon ps` and `daemon status` inspect those files and process liveness, so monitoring does not require an API key.
+
+`daemon attach` is intentionally pure shell. It follows `out.log` and sends each typed line into the daemon inbox. It is not true PTY reattachment like tmux or screen.
 
 ## Retry policy
 

@@ -37,6 +37,7 @@ The most important idea: the LLM does not directly run commands. It asks for nam
 | `.pu-history.json` | Current conversation transcript, reused across turns. |
 | `.pu-history.json.meta` | Provider/model metadata for the history file. |
 | `.pu-events.jsonl` | Append-only event log for replay, debugging, and export. |
+| `.pu/daemons/NAME/` | Optional daemon inbox, transcript, event log, and isolated history. |
 | `~/.pu.env` | Optional saved API key/provider/model/effort/reasoning configuration. |
 
 ## Running a task
@@ -212,6 +213,7 @@ If model-based summarization fails, local compaction builds a simpler memory car
 ```sh
 ./pu-unminified.sh --help
 ./pu-unminified.sh --version
+./pu-unminified.sh daemon ps
 ```
 
 Inside interactive mode:

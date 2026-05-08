@@ -2,7 +2,7 @@
   <img src="logo.png" alt="pu.sh" width="500">
 </p>
 
-<p align="center"><strong>A zero-package-dependency coding agent under 50KB. Pronounced exactly how you think.</strong></p>
+<p align="center"><strong>A zero-package-dependency coding agent in one shell file. Pronounced exactly how you think.</strong></p>
 
 <p align="center"><em>Finally, a slop cannon small enough to fit in your pocket.</em></p>
 
@@ -45,7 +45,7 @@ We ran [30+ experiments](final_report.md) to answer a question: *what's the most
 
 The answer is a shell script. The agent loop itself — send prompt, parse response, execute tool, append to history, repeat — is tiny. Everything else is developer experience and hardening.
 
-**Here's the thing nobody tells you:** the `node_modules` folder of a typical coding agent weighs more than the entire Doom source code. Three times over. `pu.sh` weighs less than many README files.
+**Here's the thing nobody tells you:** the `node_modules` folder of a typical coding agent weighs more than the entire Doom source code. Three times over. Even with daemon supervision, `pu.sh` weighs less than many README files.
 
 ## Features
 
@@ -54,6 +54,7 @@ The answer is a shell script. The agent loop itself — send prompt, parse respo
 | **7 tools** | `bash` `read` `write` `edit` `grep` `find` `ls` — Pi-shaped surface area |
 | **Interactive REPL** | Multi-turn with memory; `/model` `/effort` `/login` `/logout` `/flush` `/compact` `/export` `/skill:name` `/quit` |
 | **First-run login** | API-key wizard for Anthropic/OpenAI, optional private `~/.pu.env` save |
+| **Daemon mode** | Launch named background sessions and monitor/send/attach from the terminal |
 | **Dual provider** | Anthropic Messages API + OpenAI Responses API |
 | **OpenAI tool loop** | Preserves `reasoning`, `function_call`, and `function_call_output` items across turns |
 | **Reasoning effort** | `AGENT_EFFORT=none|minimal|low|medium|high|xhigh|max`, gated by model support |
@@ -68,9 +69,10 @@ The answer is a shell script. The agent loop itself — send prompt, parse respo
 | **Session export** | `/export` writes markdown from `.pu-events.jsonl` |
 | **Pipe mode** | `--pipe` for clean stdout, composable with other tools/agents |
 | **Checkpoint/resume** | Writes `.pu-history.json` by default; override with `AGENT_HISTORY=file.json` |
+| **Daemon isolation** | Per-daemon logs/history live under `.pu/daemons/NAME/` |
 | **Confirmation mode** | `AGENT_CONFIRM=1` asks before every tool execution; safely denies when no TTY |
 | **Event log** | Every step logged to `.pu-events.jsonl` as structured JSONL |
-| **Regression tests** | `bash eval/test_real.sh` runs 105 no-API behavioral tests |
+| **Regression tests** | `bash eval/test_real.sh` runs no-API behavioral tests |
 
 ## What it can't do
 
@@ -91,14 +93,14 @@ Let's be honest. The remaining gap to a production harness needs a real runtime:
 ## The Size
 
 ```text
-pu.sh              < 50 KB            █  (sh + curl + awk + common Unix tools)
+pu.sh daemon       55.14 KiB          █  (sh + curl + awk + common Unix tools)
 Claude Code         209 MB            ██████████████████████████
 Goose CLI           237 MB            █████████████████████████████
 Pi + Node           281 MB            ███████████████████████████████████
 SWE-agent Docker    1.8 GB            ██████████████████████████████████████████████████████████████...
 ```
 
-*Measured locally on macOS arm64. Current generated `pu.sh` is 49,276 bytes (48.12 KiB) by `wc -c`; the headline stays under 50 KB. Larger tools include their runtime/package footprints as described in [final_report.md](final_report.md).*
+*Measured locally on macOS arm64. Current generated daemon-branch `pu.sh` is 56,466 bytes (55.14 KiB) by `wc -c`. The stable `v0.1.0` release remains under 50 KB; this branch spends a few extra KB on daemon supervision. Larger tools include their runtime/package footprints as described in [final_report.md](final_report.md).*
 
 ## Configuration
 
@@ -145,6 +147,19 @@ All env vars. Optional `~/.pu.env` is created by `/login`/first run with `0600`-
 | `!cmd` | Run a shell command directly |
 | `/template` | If `.pi/prompts/template.md` exists, run it as a prompt |
 
+Daemon commands:
+
+```sh
+./pu.sh daemon start refactor "find TODOs and propose fixes"
+./pu.sh daemon ps
+./pu.sh daemon attach refactor
+./pu.sh daemon send refactor "now apply the safest fix"
+./pu.sh daemon stop refactor
+./pu.sh daemon rm refactor
+```
+
+`attach` is pure-shell follow-and-send, not a true terminal multiplexer. It tails the daemon transcript and forwards each typed line to the daemon inbox.
+
 ## How it works
 
 ```text
@@ -163,7 +178,7 @@ All env vars. Optional `~/.pu.env` is created by `/login`/first run with `0600`-
 └─────────────────────────────────────────┘
 ```
 
-Zero package dependencies. Under 50KB. 7 tools. 2 providers. 1 file.
+Zero package dependencies. One shell file. 7 tools. 2 providers. Optional daemon supervision.
 
 OpenAI uses `/v1/responses` with Responses-style tools and `max_output_tokens`. Anthropic uses `/v1/messages`. The parser is targeted `awk`, not a general JSON implementation.
 
@@ -182,7 +197,7 @@ For details, see [How pu works](docs/how-pu-works.md).
 ## Testing
 
 ```sh
-# No API calls, no cost. Current expected result: PASS: 105 FAIL: 0.
+# No API calls, no cost. Current expected result: PASS: 117 FAIL: 0.
 bash eval/test_real.sh
 
 # Shell syntax.
@@ -202,6 +217,7 @@ The current regression suite covers:
 - tool truncation
 - edit uniqueness/mode preservation and actionable edit-failure guidance
 - `grep`/`find` noisy-directory exclusions and `/effort` command
+- daemon start/send/status/stop/rm supervision with mocked workers
 - trailing-newline preservation for `write`/`edit`
 - `read limit:0`
 - spinner quietness on non-TTY stderr
@@ -225,7 +241,7 @@ We [compare against Pi](eval/COMPARISON.md) feature-by-feature. Pi wins on exten
 ## FAQ
 
 **Is this production-ready?**
-It's called `pu.sh`. It's an under-50KB slop cannon that talks to LLM APIs via `curl`. You tell me.
+It's called `pu.sh`. It's a tiny slop cannon that talks to LLM APIs via `curl`. You tell me.
 
 **Should I use this instead of Pi/Claude Code/Cursor?**
 For daily coding, probably not. Use a real tool. For CI/CD, containers, edge boxes, quick scripts, or understanding how agents actually work — `./pu.sh` and see what happens.
@@ -241,4 +257,4 @@ An AI and a human ran experiments, argued with shell, broke OpenAI schemas, fixe
 
 ## License
 
-MIT — see [LICENSE](LICENSE). It's under 50KB. Go nuts.
+MIT — see [LICENSE](LICENSE). Go nuts.

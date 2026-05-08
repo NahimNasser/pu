@@ -660,9 +660,10 @@ printf '%s' "$OUT" | grep -q 'src/a.txt' && ! printf '%s' "$OUT" | grep -q node_
 OUT=$(run_tool find "{\"path\":\"$TMPD/search\",\"name\":\"a.txt\"}")
 printf '%s' "$OUT" | grep -q 'src/a.txt' && ! printf '%s' "$OUT" | grep -q node_modules \
   && pass "ED-15" "find prunes noisy directories" || fail "ED-15" "find exclusions" "got=$OUT"
-printf 'match hidden trace\n' > "$TMPD/search/.pu-history.json"; printf 'match hidden log\n' > "$TMPD/search/.pu-events.jsonl"; printf 'match ignored agent log\n' > "$TMPD/search/agent.jsonl"
+mkdir -p "$TMPD/search/.pu/daemons/alpha"
+printf 'match hidden trace\n' > "$TMPD/search/.pu-history.json"; printf 'match hidden log\n' > "$TMPD/search/.pu-events.jsonl"; printf 'match ignored agent log\n' > "$TMPD/search/agent.jsonl"; printf 'match daemon log\n' > "$TMPD/search/.pu/daemons/alpha/out.log"; printf 'match daemon jsonl\n' > "$TMPD/search/.pu/daemons/alpha/events.jsonl"
 OUT=$(run_tool grep "{\"path\":\"$TMPD/search\",\"pattern\":\"match\"}")
-printf '%s' "$OUT" | grep -q 'src/a.txt' && ! printf '%s' "$OUT" | grep -q '.pu-history\|.pu-events\|agent.jsonl' \
+printf '%s' "$OUT" | grep -q 'src/a.txt' && ! printf '%s' "$OUT" | grep -q '.pu-history\|.pu-events\|agent.jsonl\|daemon' \
   && pass "ED-15a" "grep skips pu trace/history files" || fail "ED-15a" "grep included trace files" "got=$OUT"
 OUT=$(run_tool find "{\"path\":\"$TMPD/search\",\"name\":\"*.jsonl\"}")
 [ -z "$OUT" ] \
@@ -685,6 +686,79 @@ printf '%s' "$OUT" | grep -q '>.*old' && printf '%s' "$OUT" | grep -q 'read:' &&
   && pass "ED-19" "resume replay shows last messages" || fail "ED-19" "replay" "out=$OUT"
 
 rm "$F"
+
+# ── daemon supervisor (mocked worker, no API calls) ───────────────
+echo
+printf "${B}━━━ daemon supervisor ━━━${N}\n"
+
+cat > "$TMPD/mock-pu.sh" <<'EOF'
+#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in -i) shift;; *) break;; esac
+done
+TASK="$*"
+mock_log(){
+  mkdir -p "$(dirname "$AGENT_LOG")"
+  printf '{"s":%s,"t":"%s","c":"%s"}\n' "$1" "$2" "$3" >> "$AGENT_LOG"
+}
+if [ -n "${AGENT_HISTORY:-}" ]; then
+  mkdir -p "$(dirname "$AGENT_HISTORY")"
+  printf '[]' > "$AGENT_HISTORY"
+  printf 'mock:model' > "$AGENT_HISTORY.meta"
+fi
+if [ -n "$TASK" ]; then
+  mock_log 0 start "$TASK"
+  printf 'mock: %s\n' "$TASK"
+  mock_log 1 response "mock done"
+fi
+while IFS= read -r line; do
+  case "$line" in /quit) exit 0;; esac
+  mock_log 0 start "$line"
+  printf 'mock: %s\n' "$line"
+  mock_log 1 response "mock done"
+done
+EOF
+chmod +x "$TMPD/mock-pu.sh"
+wait_grep(){ local f="$1" p="$2" i=0; while [ "$i" -lt 50 ]; do [ -f "$f" ] && grep -q "$p" "$f" && return 0; sleep 0.1; i=$((i+1)); done; return 1; }
+DM_PROJ="$TMPD/daemon project"; mkdir -p "$DM_PROJ"; OLD_PWD=$(pwd); cd "$DM_PROJ" || exit 1
+PU_DAEMON_SCRIPT="$TMPD/mock-pu.sh"; export PU_DAEMON_SCRIPT
+PROVIDER=anthropic; MODEL=claude-opus-4-7; ANTHROPIC_API_KEY=dummy; export ANTHROPIC_API_KEY
+daemon_cmd start bad/name "nope" >/dev/null 2>"$TMPD/dm_bad.err"; RC=$?
+[ $RC -ne 0 ] && grep -q 'Daemon name' "$TMPD/dm_bad.err" \
+  && pass "DM-1" "daemon rejects invalid names" || fail "DM-1" "invalid daemon name accepted" "rc=$RC err=$(cat "$TMPD/dm_bad.err")"
+daemon_cmd start alpha "first task" > "$TMPD/dm_alpha.out" 2>"$TMPD/dm_alpha.err"; RC=$?
+wait_grep ".pu/daemons/alpha/events.jsonl" "first task"; READY=$?
+[ $RC -eq 0 ] && [ $READY -eq 0 ] && [ -p .pu/daemons/alpha/in ] && [ -s .pu/daemons/alpha/pid ] && [ -s .pu/daemons/alpha/keeper.pid ] \
+  && pass "DM-2" "daemon start creates isolated state and runs initial task" \
+  || fail "DM-2" "daemon start" "rc=$RC ready=$READY out=$(cat "$TMPD/dm_alpha.out") err=$(cat "$TMPD/dm_alpha.err")"
+daemon_cmd start beta "second task" >/dev/null 2>"$TMPD/dm_beta.err"; RC=$?
+wait_grep ".pu/daemons/beta/events.jsonl" "second task"; READY=$?
+[ $RC -eq 0 ] && [ $READY -eq 0 ] && [ -f .pu/daemons/alpha/history.json ] && [ -f .pu/daemons/beta/history.json ] \
+  && pass "DM-3" "multiple daemons use separate history/log paths" \
+  || fail "DM-3" "multiple daemon isolation" "rc=$RC ready=$READY err=$(cat "$TMPD/dm_beta.err")"
+daemon_cmd send alpha "follow up" >/dev/null 2>"$TMPD/dm_send.err"; RC=$?
+wait_grep ".pu/daemons/alpha/out.log" "follow up"; READY=$?
+[ $RC -eq 0 ] && [ $READY -eq 0 ] \
+  && pass "DM-4" "daemon send forwards prompt to inbox" \
+  || fail "DM-4" "daemon send" "rc=$RC ready=$READY err=$(cat "$TMPD/dm_send.err") log=$(cat .pu/daemons/alpha/out.log 2>/dev/null)"
+PS=$(daemon_cmd ps 2>"$TMPD/dm_ps.err")
+STATUS=$(daemon_cmd status alpha 2>"$TMPD/dm_status.err")
+printf '%s' "$PS" | grep -q 'alpha' && printf '%s' "$PS" | grep -q 'beta' && printf '%s' "$STATUS" | grep -q 'state: idle' \
+  && pass "DM-5" "daemon ps/status report running idle sessions" \
+  || fail "DM-5" "daemon ps/status" "ps=$PS status=$STATUS err=$(cat "$TMPD/dm_ps.err" "$TMPD/dm_status.err")"
+daemon_cmd stop alpha >/dev/null 2>"$TMPD/dm_stop.err"; RC=$?
+STATUS=$(daemon_cmd status alpha 2>/dev/null)
+printf '%s' "$STATUS" | grep -q 'state: exited' && [ $RC -eq 0 ] \
+  && pass "DM-6" "daemon stop exits worker and keeper" \
+  || fail "DM-6" "daemon stop" "rc=$RC status=$STATUS err=$(cat "$TMPD/dm_stop.err")"
+daemon_cmd rm alpha >/dev/null 2>"$TMPD/dm_rm.err"; RC=$?
+[ $RC -eq 0 ] && [ ! -e .pu/daemons/alpha ] \
+  && pass "DM-7" "daemon rm removes stopped state" \
+  || fail "DM-7" "daemon rm" "rc=$RC err=$(cat "$TMPD/dm_rm.err")"
+daemon_cmd stop beta >/dev/null 2>/dev/null || true
+daemon_cmd rm beta >/dev/null 2>/dev/null || true
+unset PU_DAEMON_SCRIPT
+cd "$OLD_PWD" || exit 1
 
 # ── Real-world-ish workflows (mocked APIs, real tools/CLI) ─────────
 echo

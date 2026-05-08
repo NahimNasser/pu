@@ -7,14 +7,14 @@ Current validation:
 ```sh
 sh -n pu.sh
 bash eval/test_real.sh
-# PASS: 110 FAIL: 0 TOTAL: 110
+# PASS: 117 FAIL: 0 TOTAL: 117
 ```
 
 Current size:
 
 ```text
-49276 bytes pu.sh
-481 lines pu.sh
+56466 bytes pu.sh
+746 lines pu.sh
 ```
 
 ## Recently fixed
