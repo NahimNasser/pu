@@ -1,6 +1,6 @@
 #!/bin/sh
 # generated from pu-unminified.sh; edit that file, then run scripts/minify-pu
-set -u;_STATE=idle _CHILD=0 SPIN_PID="" SPIN_MSG=""
+set -u;_STATE=idle;_CHILD=0;SPIN_PID="";SPIN_MSG=""
 _spinner(){ tput civis >&2 2>/dev/null;while :;do for f in '[   ]' '[=  ]' '[== ]' '[===]' '[ ==]' '[  =]';do printf '\r\033[K%s %s' "$f" "$SPIN_MSG" >&2;sleep 0.15;done
 done;}
 spin_start(){ [ -t 2 ]||return 0;SPIN_MSG="$*";[ -n "$SPIN_PID" ]&&return 0;_spinner& SPIN_PID=$!;}
@@ -17,24 +17,25 @@ _CHILD=0;_STATE=idle;else exit 130;fi
 _prompt_redraw(){ printf '\r\033[K\033[36m> \033[0m%s' "$1" >&2;}
 _prompt_read(){ local line;printf '\033[36m> \033[0m' >&2;IFS= read -r line||return 1;INPUT=$line;return 0;}
 _clean_key(){
-printf '%s' "$1"|sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^export[[:space:]]*//;s/^OPENAI_API_KEY=//;s/^ANTHROPIC_API_KEY=//;s/^"//;s/"$//;s/^'\''//;
+printf '%s' "$1"|sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^export[[:space:]]*//;s/^OPENAI_API_KEY=//;s/^ANTHROPIC_API_KEY=//;s/^DEEPSEEK_API_KEY=//;s/^"//;s/"$//;s/^'\''//;
 s/'\''$//'|tr -d '[:space:]'
 }
-_load_env(){ [ -f "$HOME/.pu.env" ]||return;while IFS='=' read -r k v;do k=$(printf '%s' "$k"|sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^export[[:space:]]*//')
-v=$(_clean_key "$v");case "$k" in OPENAI_API_KEY)[ -z "${OPENAI_API_KEY:-}" ]&&OPENAI_API_KEY=$v;; ANTHROPIC_API_KEY)[ -z "${ANTHROPIC_API_KEY:-}" ]&&ANTHROPIC_API_KEY=$v;;
+_load_env(){ [ -f "$HOME/.pu.env" ]||return;while IFS= read -r _line;do case "$_line" in ''|'#'*)continue;esac
+k="${_line%%=*}";v="${_line#*=}";k=$(printf '%s' "$k"|sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^export[[:space:]]*//')
+v=$(_clean_key "$v");case "$k" in OPENAI_API_KEY)[ -z "${OPENAI_API_KEY:-}" ]&&OPENAI_API_KEY=$v;; ANTHROPIC_API_KEY)[ -z "${ANTHROPIC_API_KEY:-}" ]&&ANTHROPIC_API_KEY=$v;; DEEPSEEK_API_KEY)[ -z "${DEEPSEEK_API_KEY:-}" ]&&DEEPSEEK_API_KEY=$v;;
 AGENT_PROVIDER)[ -z "${AGENT_PROVIDER:-}" ]&&AGENT_PROVIDER=$v;; AGENT_MODEL)[ -z "${AGENT_MODEL:-}" ]&&AGENT_MODEL=$v;; AGENT_EFFORT)[ -z "${AGENT_EFFORT:-}" ]&&AGENT_EFFORT=$v;;
 AGENT_REASONING_SUMMARY)[ -z "${AGENT_REASONING_SUMMARY:-}" ]&&AGENT_REASONING_SUMMARY=$v;esac
 done <"$HOME/.pu.env";}
-_load_env;[ -n "${OPENAI_API_KEY:-}" ]&&OPENAI_API_KEY=$(_clean_key "$OPENAI_API_KEY");[ -n "${ANTHROPIC_API_KEY:-}" ]&&ANTHROPIC_API_KEY=$(_clean_key "$ANTHROPIC_API_KEY")
-if [ -n "${AGENT_PROVIDER:-}" ];then PROVIDER=$AGENT_PROVIDER;else case "${AGENT_MODEL:-}" in gpt-*|o1*|o3*|o4*)PROVIDER=openai;; claude-*)PROVIDER=anthropic;;
-*)[ -n "${OPENAI_API_KEY:-}" ]&&[ -z "${ANTHROPIC_API_KEY:-}" ]&&PROVIDER=openai||PROVIDER=anthropic;esac
-fi;case "$PROVIDER" in openai)MODEL="${AGENT_MODEL:-gpt-5.5}";; anthropic|*)MODEL="${AGENT_MODEL:-claude-opus-4-7}";esac
+_load_env;[ -n "${OPENAI_API_KEY:-}" ]&&OPENAI_API_KEY=$(_clean_key "$OPENAI_API_KEY");[ -n "${ANTHROPIC_API_KEY:-}" ]&&ANTHROPIC_API_KEY=$(_clean_key "$ANTHROPIC_API_KEY");[ -n "${DEEPSEEK_API_KEY:-}" ]&&DEEPSEEK_API_KEY=$(_clean_key "$DEEPSEEK_API_KEY")
+if [ -n "${AGENT_PROVIDER:-}" ];then PROVIDER=$AGENT_PROVIDER;else case "${AGENT_MODEL:-}" in gpt-*|o1*|o3*|o4*)PROVIDER=openai;; claude-*)PROVIDER=anthropic;; deepseek-*)PROVIDER=deepseek;;
+*)if [ -n "${ANTHROPIC_API_KEY:-}" ];then PROVIDER=anthropic;elif [ -n "${OPENAI_API_KEY:-}" ];then PROVIDER=openai;elif [ -n "${DEEPSEEK_API_KEY:-}" ];then PROVIDER=deepseek;else PROVIDER=anthropic;fi;;esac
+fi;case "$PROVIDER" in openai)MODEL="${AGENT_MODEL:-gpt-5.5}";; deepseek)MODEL="${AGENT_MODEL:-deepseek-chat}";; anthropic|*)MODEL="${AGENT_MODEL:-claude-opus-4-7}";esac
 MAX_STEPS="${AGENT_MAX_STEPS:-100}";MAX_TOKENS="${AGENT_MAX_TOKENS:-4096}";AGENT_RESERVE="${AGENT_RESERVE:-16000}";AGENT_KEEP_RECENT="${AGENT_KEEP_RECENT:-80000}"
 AGENT_TOOL_TRUNC="${AGENT_TOOL_TRUNC:-100000}";AGENT_READ_MAX="${AGENT_READ_MAX:-1000000}";AGENT_LOG_TRUNC="${AGENT_LOG_TRUNC:-20000}";LOG="${AGENT_LOG:-.pu-events.jsonl}"
 HISTORY="${AGENT_HISTORY-.pu-history.json}";CONFIRM="${AGENT_CONFIRM:-0}";CTX_LIMIT="${AGENT_CONTEXT_LIMIT:-400000}";VERBOSE="${AGENT_VERBOSE:-1}";THINKING="${AGENT_THINKING:-}"
 EFFORT="${AGENT_EFFORT:-${AGENT_THINKING:-medium}}";REASONING_SUMMARY="${AGENT_REASONING_SUMMARY:-auto}";EFFORT_OK=0
 case "$PROVIDER:$MODEL" in openai:gpt-5.5*)EFFORT_OK=1;;anthropic:claude-opus-4-7*)[ -z "${AGENT_CONTEXT_LIMIT:-}" ]&&CTX_LIMIT=272000;EFFORT_OK=1;;
-anthropic:claude-opus-4-6*|anthropic:claude-sonnet-4-6*|anthropic:claude-opus-4-5*)EFFORT_OK=1;esac;PIPE=0;COST=0;INTERACTIVE=0;MSGS=""
+anthropic:claude-opus-4-6*|anthropic:claude-sonnet-4-6*|anthropic:claude-opus-4-5*)EFFORT_OK=1;;deepseek:*)[ -z "${AGENT_CONTEXT_LIMIT:-}" ]&&CTX_LIMIT=128000;;esac;PIPE=0;COST=0;INTERACTIVE=0;MSGS=""
 SYSTEM="${AGENT_SYSTEM:-You are an expert coding assistant. You can read, write, edit, grep, find, ls, and run bash.
 Tools: read(path,offset,limit); bash(command); edit(path,oldText,newText); write(path,content); grep(pattern,path); find(path,name); ls(path).
 Guidelines: prefer grep/find/ls over bash for exploration; working directory is $(pwd), do not cd in bash commands; combine related grep searches with alternation.
@@ -44,7 +45,7 @@ Current date: $(date +%Y-%m-%d)
 Current working directory: $(pwd)
 Your source code is at $(cd "$(dirname "$0")"&&pwd)/$(basename "$0"). Use read to inspect it if asked about your capabilities/configuration.}"
 while [ $# -gt 0 ];do
-case "$1" in -h|--help)printf '%s\n' 'pu-unminified.sh — readable educational build of pu.sh (sh+curl, no deps)' 'Usage: ./pu-unminified.sh "task" | ./pu-unminified.sh (interactive) | --pipe | --cost | -v' 'Env: ANTHROPIC_API_KEY OPENAI_API_KEY AGENT_MODEL AGENT_PROVIDER AGENT_SYSTEM AGENT_MAX_STEPS AGENT_MAX_TOKENS AGENT_LOG AGENT_CONFIRM AGENT_VERBOSE AGENT_REASONING_SUMMARY AGENT_CONTEXT_LIMIT AGENT_RESERVE AGENT_TOOL_TRUNC AGENT_READ_MAX AGENT_LOG_TRUNC AGENT_HISTORY AGENT_THINKING/AGENT_EFFORT AGENT_PRICE_* ~/.pu.env' '7 tools, multi-turn, retries, JSONL logging, pipe mode, !command; auto-compaction summarizes older turns; /compact [focus] runs it manually.'
+case "$1" in -h|--help)printf '%s\n' 'pu-unminified.sh — readable educational build of pu.sh (sh+curl, no deps)' 'Usage: ./pu-unminified.sh "task" | ./pu-unminified.sh (interactive) | --pipe | --cost | -v' 'Env: ANTHROPIC_API_KEY OPENAI_API_KEY DEEPSEEK_API_KEY AGENT_MODEL AGENT_PROVIDER AGENT_SYSTEM AGENT_MAX_STEPS AGENT_MAX_TOKENS AGENT_LOG AGENT_CONFIRM AGENT_VERBOSE AGENT_REASONING_SUMMARY AGENT_CONTEXT_LIMIT AGENT_RESERVE AGENT_TOOL_TRUNC AGENT_READ_MAX AGENT_LOG_TRUNC AGENT_HISTORY AGENT_THINKING/AGENT_EFFORT AGENT_PRICE_* ~/.pu.env' '7 tools, multi-turn, retries, JSONL logging, pipe mode, !command; auto-compaction summarizes older turns; /compact [focus] runs it manually.'
 exit 0;; -v|--version)echo "${0##*/} 0.1.0";exit 0;; --pipe|-p)PIPE=1;shift;; --cost)COST=1;shift;; -i)INTERACTIVE=1;shift;; -n|--no-interactive)INTERACTIVE=-1;shift;; *)break;esac
 done;for _dep in curl awk;do command -v $_dep >/dev/null 2>&1||{ printf '\033[31m[!] %s not found\033[0m\n' "$_dep" >&2;exit 1;}
 done;RUNSH=$(command -v bash 2>/dev/null||echo sh)
@@ -191,11 +192,20 @@ curl -sS -m120 \
 -H "Authorization: Bearer ${OPENAI_API_KEY:-}" \
 -H content-type:application/json \
 -d "{\"model\":\"$MODEL\",\"max_output_tokens\":$mt$rp,\"instructions\":\"$sys_esc\",\"input\":$1,\"tools\":[$RF]}" \
-https://api.openai.com/v1/responses 2>&1;esac
+https://api.openai.com/v1/responses 2>&1;; deepseek)local inner_msgs;inner_msgs="${1#\[}";inner_msgs="${inner_msgs%\]}"
+curl -sS -m120 \
+-H "Authorization: Bearer ${DEEPSEEK_API_KEY:-}" \
+-H content-type:application/json \
+-d "{\"model\":\"$MODEL\",\"max_tokens\":$mt,\"messages\":[{\"role\":\"system\",\"content\":\"$sys_esc\"}${inner_msgs:+,}$inner_msgs],\"tools\":[$TF]}" \
+https://api.deepseek.com/chat/completions 2>&1;;esac
 }
 parse_response(){ local resp="$1";TY= TN= TI= TX= TS= CB= TINP= TC=;if [ "$PROVIDER" = anthropic ];then local tu;tu=$(jb "$resp" "tool_use");if [ -n "$tu" ];then TY=T
 TN=$(jp "$tu" name);TI=$(jp "$tu" id);TINP=$(jp "$tu" input);local tt;tt=$(jb "$resp" "text");TX=$(jp "$tt" text);CB=$(jp "$resp" content);else TY=X;local tt
 tt=$(jb "$resp" "text");TX=$(jp "$tt" text);fi
+elif [ "$PROVIDER" = deepseek ];then TC=$(jp "$resp" tool_calls);TS=$(jp "$resp" reasoning_content);TX=$(jp "$resp" content);[ "$TX" = null ]&&TX=""
+[ "$TS" = null ]&&TS="";if [ -n "$TC" ]&&[ "$TC" != null ]&&[ "$TC" != "[]" ];then TY=T;local first_tc fobj
+first_tc=$(each_tool_use "$TC" '"function":'|sed -n 1p);TI=$(jp "$first_tc" id);fobj=$(jb "$first_tc" arguments);TN=$(jp "$fobj" name);TINP=$(jp "$fobj" arguments)
+else TY=X;TC=;fi
 else TC=$(jp "$resp" output);TS=$(reasoning_summaries "$resp");local call;call=$(jb "$TC" function_call);if [ -n "$call" ];then TY=T;TI=$(jp "$call" call_id)
 [ -z "$TI" ]&&TI=$(jp "$call" id);TN=$(jp "$call" name);TINP=$(jp "$call" arguments);local tt;tt=$(jb "$resp" output_text);TX=$(jp "$tt" text)
 [ -z "$TX" ]&&TX=$(jp "$resp" output_text);else TY=X;local tt;tt=$(jb "$resp" output_text);TX=$(jp "$tt" text);[ -z "$TX" ]&&TX=$(jp "$resp" output_text);TC=;fi
@@ -301,7 +311,7 @@ printf '%s\n' "$1"|awk '
 }
 _ctx_filter_anthropic_pairs(){
 printf '%s\n' "$1"|awk '
-  function ids(s,key,  rest,t,id){rest=s;while(match(rest,"\\\"" key "\\\"[ \\t]*:[ \\t]*\\\"[^\\\"]+\\\"")){t=substr(rest,RSTART,RLENGTH);sub("^.*\\\"" key "\\\"[ \\t]*:[ \\t]*\\\"","",t);sub("\\\"$","",t);id=t;out=out " " id;rest=substr(rest,RSTART+RLENGTH)};return out}
+  function ids(s,key,  rest,t,id,out){rest=s;out="";while(match(rest,"\\\"" key "\\\"[ \\t]*:[ \\t]*\\\"[^\\\"]+\\\"")){t=substr(rest,RSTART,RLENGTH);sub("^.*\\\"" key "\\\"[ \\t]*:[ \\t]*\\\"","",t);sub("\\\"$","",t);id=t;out=out " " id;rest=substr(rest,RSTART+RLENGTH)};return out}
   function okuse(list,idx,  n,j,b){n=split(list,b," ");for(j=1;j<=n;j++)if(b[j]!=""&&(!(b[j] in resAt)||resAt[b[j]]<=idx))return 0;return 1}
   function okres(list,idx,  n,j,b){n=split(list,b," ");for(j=1;j<=n;j++)if(b[j]!=""&&(!(b[j] in useAt)||useAt[b[j]]>=idx))return 0;return 1}
   {a[++n]=$0; if($0~/"type"[ \t]*:[ \t]*"tool_use"/){out="";u=ids($0,"id");useLine[n]=u;nid=split(u,b," ");for(i=1;i<=nid;i++)if(b[i]!=""&&!(b[i] in useAt))useAt[b[i]]=n}; if($0~/"type"[ \t]*:[ \t]*"tool_result"/){out="";r=ids($0,"tool_use_id");resLine[n]=r;nid=split(r,b," ");for(i=1;i<=nid;i++)if(b[i]!=""&&!(b[i] in resAt))resAt[b[i]]=n}}
@@ -394,10 +404,11 @@ break;done
 local fatal;fatal=$(jp "$resp" error);[ -n "$fatal" ]&&[ "$fatal" != null ]&&{ err "API failed: $(jp "$fatal" message)";log "$step" error "api";return 1;}
 track_tokens "$resp";parse_response "$resp";[ -n "$TS" ]&&[ "$TS" != null ]&&{ _think "$TS";log "$step" reasoning "$TS";}
 if [ "$TY" = "T" ]&&[ -n "$TN" ];then [ -n "$TX" ]&&[ "$TX" != null ]&&_say "$TX";local trs="" trm="" trc="" _tu _tn _ti _tinp _tout _tesc _fn _src _mark
-case "$PROVIDER" in anthropic)_src="$CB";_mark='"type":"tool_use"';; openai)_src="$TC";_mark='"function_call"';esac
+case "$PROVIDER" in anthropic)_src="$CB";_mark='"type":"tool_use"';; openai)_src="$TC";_mark='"function_call"';; deepseek)_src="$TC";_mark='"function":';esac
 _src=$(printf '%s' "$_src"|tr -d '\n');while IFS= read -r _tu;do [ -z "$_tu" ]&&continue;case "$PROVIDER" in anthropic)_tn=$(jp "$_tu" name);_ti=$(jp "$_tu" id)
 _tinp=$(jp "$_tu" input);; openai)[ "$(jp "$_tu" type)" = reasoning ]&&{ trc="$trc${trc:+,}$_tu";continue;}
-_ti=$(jp "$_tu" call_id);[ -z "$_ti" ]&&_ti=$(jp "$_tu" id);_tn=$(jp "$_tu" name);_tinp=$(jp "$_tu" arguments);esac
+_ti=$(jp "$_tu" call_id);[ -z "$_ti" ]&&_ti=$(jp "$_tu" id);_tn=$(jp "$_tu" name);_tinp=$(jp "$_tu" arguments);; deepseek)local _fobj;_ti=$(jp "$_tu" id)
+_fobj=$(jb "$_tu" arguments);_tn=$(jp "$_fobj" name);_tinp=$(jp "$_fobj" arguments);esac
 { [ -z "$_ti" ]||[ -z "$_tn" ];}&&{ log "$step" error "Bad tool call: $_tu";continue;}
 [ "$PROVIDER" = openai ]&&trc="$trc${trc:+,}$_tu";log "$step" tool_call "$_tn: $(printf '%s' "$_tinp"|head -c 200)";local of;of=$(mktemp);spin_start
 run_tool "$_tn" "$_tinp" >"$of"& _CHILD=$!;wait "$_CHILD"||true;_CHILD=0;_tout=$(cat "$of");rm -f "$of";spin_stop;[ "$_STATE" = idle ]&&{ err "[interrupted]";return 130;}
@@ -405,12 +416,12 @@ log "$step" tool_result "$_tout";_tool_out "$_tout";case "$_tout" in Error:*|\[e
 _tesc=$(json_escape "$_tout");trs="$trs${trs:+,}{\"type\":\"tool_result\",\"tool_use_id\":\"$_ti\",\"content\":\"$_tesc\"}"
 [ "$PROVIDER" = openai ]&&trm="$trm,{\"type\":\"function_call_output\",\"call_id\":\"$_ti\",\"output\":\"$_tesc\"}"||trm="$trm,{$RT,\"tool_call_id\":\"$_ti\",\"content\":\"$_tesc\"}"
 done <<EOF
-$([ "$PROVIDER" = openai ]&&oa_items "$_src"||each_tool_use "$_src" "$_mark")
+$(case "$PROVIDER" in openai)oa_items "$_src";; *)each_tool_use "$_src" "$_mark";;esac)
 EOF
 [ -z "$trs" ]&&{ err "No valid tool calls parsed";dbg "$resp";log "$step" error "No valid tool calls parsed";return 1;}
 case "$PROVIDER" in anthropic)[ -n "$CB" ]&&append "{$RA,\"content\":$CB},{$RU,\"content\":[$trs]}"||{ local _ti0;_ti0="$TINP";[ -z "$_ti0" ]&&_ti0="{}"
 append "{$RA,\"content\":[{\"type\":\"text\",\"text\":\"\"},{\"type\":\"tool_use\",\"id\":\"$TI\",\"name\":\"$TN\",\"input\":$_ti0}]},{$RU,\"content\":[$trs]}";};;
-openai)append "$trc$trm";esac
+openai)append "$trc$trm";; deepseek)local _txesc;_txesc=$(json_escape "${TX:-}");append "{$RA,\"content\":\"$_txesc\",\"tool_calls\":$TC}$trm";esac
 save;elif [ "$TY" = "X" ];then if [ -z "$TX" ]||[ "$TX" = null ];then [ "$empty_final" = 0 ]&&{ empty_final=1;[ "$PROVIDER:$EFFORT_OK" = openai:1 ]&&EFFORT=low
 append '{"role":"user","content":"Please summarize your findings and next steps."}';continue;}
 err "Empty final response";return 1;fi
@@ -429,16 +440,17 @@ case "$t" in start)printf '## Task\n%s\n\n' "$c";; tool_call)printf '### Tool: %
 esac
 done <"$LOG" >>"$out";info "Exported to $out";}
 _sq(){ printf "'%s'" "$(printf '%s' "$1"|sed "s/'/'\\\\''/g")";}
-_have_key(){ case "$PROVIDER" in anthropic)[ -n "${ANTHROPIC_API_KEY:-}" ];; openai)[ -n "${OPENAI_API_KEY:-}" ];; *)return 2;esac
+_have_key(){ case "$PROVIDER" in anthropic)[ -n "${ANTHROPIC_API_KEY:-}" ];; openai)[ -n "${OPENAI_API_KEY:-}" ];; deepseek)[ -n "${DEEPSEEK_API_KEY:-}" ];; *)return 2;esac
 }
 _ensure_key(){ _have_key||{ [ -t 0 ]&&_setup||{
-err "No API key. Set ANTHROPIC_API_KEY or OPENAI_API_KEY (https://console.anthropic.com/settings/keys | https://platform.openai.com/api-keys)";return 1;}
+err "No API key. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or DEEPSEEK_API_KEY (https://console.anthropic.com/settings/keys | https://platform.openai.com/api-keys | https://platform.deepseek.com/api_keys)";return 1;}
 };}
 _set_provider_model(){ PROVIDER="$1";MODEL="$2";EFFORT_OK=0;case "$PROVIDER:$MODEL" in openai:gpt-5.5*)[ -z "${AGENT_CONTEXT_LIMIT:-}" ]&&CTX_LIMIT=400000;EFFORT_OK=1;;
 anthropic:claude-opus-4-7*)[ -z "${AGENT_CONTEXT_LIMIT:-}" ]&&CTX_LIMIT=272000;EFFORT_OK=1;;
-anthropic:claude-opus-4-6*|anthropic:claude-sonnet-4-6*|anthropic:claude-opus-4-5*)EFFORT_OK=1;esac;}
-_setup(){ local p k m e s u km dm os;printf '\nWelcome to pu-unminified.sh.\n\nProvider:\n  1) Anthropic (Claude)\n  2) OpenAI (GPT)\n> ' >&2;read -r p
-case "$p" in 2|openai|OpenAI)PROVIDER=openai;km=OPENAI_API_KEY;u=https://platform.openai.com/api-keys;dm=gpt-5.5;; *)PROVIDER=anthropic;km=ANTHROPIC_API_KEY
+anthropic:claude-opus-4-6*|anthropic:claude-sonnet-4-6*|anthropic:claude-opus-4-5*)EFFORT_OK=1;;
+deepseek:*)[ -z "${AGENT_CONTEXT_LIMIT:-}" ]&&CTX_LIMIT=128000;;esac;}
+_setup(){ local p k m e s u km dm os;printf '\nWelcome to pu-unminified.sh.\n\nProvider:\n  1) Anthropic (Claude)\n  2) OpenAI (GPT)\n  3) DeepSeek\n> ' >&2;read -r p
+case "$p" in 2|openai|OpenAI)PROVIDER=openai;km=OPENAI_API_KEY;u=https://platform.openai.com/api-keys;dm=gpt-5.5;; 3|deepseek|DeepSeek)PROVIDER=deepseek;km=DEEPSEEK_API_KEY;u=https://platform.deepseek.com/api_keys;dm=deepseek-chat;; *)PROVIDER=anthropic;km=ANTHROPIC_API_KEY
 u=https://console.anthropic.com/settings/keys;dm=claude-opus-4-7;esac
 command -v open >/dev/null 2>&1&&open "$u" 2>/dev/null||command -v xdg-open >/dev/null 2>&1&&xdg-open "$u" 2>/dev/null||true
 printf 'Get a key at %s\nPaste API key (hidden): ' "$u" >&2;os=$(stty -g 2>/dev/null||true);stty -echo 2>/dev/null||true;read -r k
@@ -452,7 +464,7 @@ printf '%s=%s\nAGENT_PROVIDER=%s\nAGENT_MODEL=%s\nAGENT_EFFORT=%s\nAGENT_REASONI
 esac
 }
 handle_cmd(){ case "$1" in /model|/model\ *)local nm;nm=$(printf '%s' "$1"|sed 's|^/model *||');[ -n "$nm" ]&&{ case "$nm" in gpt-*|o1*|o3*|o4*)_set_provider_model openai "$nm";;
-claude-*)_set_provider_model anthropic "$nm";; *)MODEL="$nm";esac
+claude-*)_set_provider_model anthropic "$nm";; deepseek-*)_set_provider_model deepseek "$nm";; *)MODEL="$nm";esac
 info "Model: $MODEL ($PROVIDER)";}||info "Current: $MODEL ($PROVIDER)";return 0;; /effort|/effort\ *)local ef;ef=$(printf '%s' "$1"|sed 's|^/effort *||');[ -n "$ef" ]&&{
 case "$ef" in n)ef=none;; min)ef=minimal;; l)ef=low;; m)ef=medium;; h)ef=high;; x|xh)ef=xhigh;esac
 EFFORT=$ef;}
